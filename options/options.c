@@ -308,7 +308,10 @@ const m_option_t mp_opts[] = {
                M_OPT_FIXED | CONF_NOCFG | CONF_PRE_PARSE | M_OPT_FILE),
     OPT_STRINGLIST("reset-on-next-file", reset_options, 0),
 
-#if HAVE_LUA
+// javascript only needs script/script-opts/load-scripts but the behavior is
+// still sane also with the other options exposed (e.g. the osc is disabled by
+// default and if manually enabled will be rejected due to missing lua backend).
+#if HAVE_LUA || HAVE_JAVASCRIPT
     OPT_STRINGLIST("script", script_files, M_OPT_FIXED | M_OPT_FILE),
     OPT_KEYVALUELIST("script-opts", script_opts, 0),
     OPT_FLAG("osc", lua_load_osc, UPDATE_BUILTIN_SCRIPTS),
