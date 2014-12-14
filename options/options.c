@@ -129,13 +129,13 @@ const m_option_t mp_opts[] = {
 #if HAVE_LUA || HAVE_JAVASCRIPT
     OPT_STRINGLIST("lua", lua_files, CONF_GLOBAL | M_OPT_FILE),
     OPT_KEYVALUELIST("lua-opts", lua_opts, M_OPT_GLOBAL),
+    OPT_FLAG("load-scripts", auto_load_scripts, CONF_GLOBAL),
 #endif
 
 #if HAVE_LUA
     OPT_FLAG("osc", lua_load_osc, CONF_GLOBAL),
     OPT_FLAG("ytdl", lua_load_ytdl, CONF_GLOBAL),
     OPT_STRING("ytdl-format", lua_ytdl_format, CONF_GLOBAL),
-    OPT_FLAG("load-scripts", auto_load_scripts, CONF_GLOBAL),
 #endif
 
 // ------------------------- stream options --------------------
