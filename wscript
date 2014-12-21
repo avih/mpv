@@ -272,8 +272,8 @@ iconv support use --disable-iconv.",
         'func': check_lua,
     }, {
         'name' : '--javascript',
-        'desc' : 'Javascript (MuJS)',
-        'func':  check_statement('mujs.h', 'js_setcontext(js_newstate(0, 0), 0)', lib='mujs'),
+        'desc' : 'Javascript (Duktape)',
+        'func':  check_cc(fragment=load_fragment('duk.c')),
     }, {
         'name': '--libass',
         'desc': 'SSA/ASS support',
