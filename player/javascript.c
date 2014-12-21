@@ -24,8 +24,6 @@
 #include <dirent.h>
 #include <math.h>
 
-#include <mujs.h>
-
 #include "osdep/io.h"
 
 #include "talloc.h"
@@ -49,7 +47,214 @@
 #include "client.h"
 #include "libmpv/client.h"
 
+#define MUD_HAVE_DUKTAPE 1
+#if (MUD_HAVE_DUKTAPE)
+#include "duktape/duktape.h"
+#else
+#include <mujs.h>
+#endif
+
+
 #define MAX_LENGTH_COMMANDV 50
+
+/* MuJS -> Duktape relatively generic wrapper.
+// Incomplete, but enough for the current code. */
+#if (MUD_HAVE_DUKTAPE)
+#define js_State          duk_context
+#define js_newstate(a,b)  duk_create_heap_default()
+#define js_freestate      duk_destroy_heap
+
+#define js_gettop         duk_get_top
+#define js_pcall          duk_pcall_method
+#define js_call           duk_call_method
+#define js_pop            duk_pop_n
+#define js_throw          duk_throw
+#define js_copy           duk_dup
+#define js_gc             duk_gc
+
+#define js_pushglobal     duk_push_global_object
+#define js_pushundefined  duk_push_undefined
+#define js_pushboolean    duk_push_boolean
+#define js_pushstring     duk_push_string
+#define js_pushlstring    duk_push_lstring
+#define js_pushnumber     duk_push_number
+#define js_pushnull       duk_push_null
+
+#define js_newobject      duk_push_object
+#define js_newarray       duk_push_array
+
+#define js_setproperty    duk_put_prop_string
+#define js_getproperty    duk_get_prop_string
+#define js_getglobal      duk_get_global_string
+#define js_getlength      duk_get_length
+#define js_setindex       duk_put_prop_index
+#define js_getindex       duk_get_prop_index
+#define js_getlength      duk_get_length
+
+#define js_iscallable     duk_is_function
+#define js_isundefined    duk_is_undefined
+#define js_isobject       duk_is_object_coercible
+#define js_isstring       duk_is_string
+#define js_tostring       duk_safe_to_string
+#define js_isnull         duk_is_null
+#define js_isboolean      duk_is_boolean
+#define js_isnumber       duk_is_number
+#define js_isarray        duk_is_array
+
+#define js_tonumber       duk_to_number
+#define js_toboolean      duk_to_boolean
+#define js_tointeger      duk_to_int
+
+// - duktape's functions have 0 based index where mujs is 1 (for actual args) - add insert.
+// - mujs functions are always expected to return something - return 1.
+// - mujs functions expect min_args, while duk has abs_args or var_args - use var_args + pad.
+/* example:
+js_call(j, 1) - one arg for a function which expects 2 (beyond 'this')
+mujs: top=3, args=[this, arg1, undefined]
+duk: top=1, args=[arg1]
+     after insertion of this: 2 [undefined, arg1]
+     -- the current code doesn't use 'this' (arg0) so undefined is enough.
+     after padding: 3 [undefined, arg1, undefined]
+     -- and the access indices are now identical (positive and negative)
+*/
+#define MUD_WRAPPER(f, nargs)                     \
+static void f(js_State*);                         \
+static duk_ret_t                                  \
+mud_wrapper_##f(js_State *J)                      \
+{                                                 \
+    duk_push_undefined(J);                        \
+    duk_insert(J, 0);                             \
+    for (int i = duk_get_top(J); i < nargs; i++)  \
+        duk_push_undefined(J);                    \
+    f(J);                                         \
+    return 1;                                     \
+}
+
+// Note that nargs is ignored, and instead it should be defined with MUD_WRAPPER.
+// it possible define a more complex wrapper to use runtime arg-ness, but not needed for existing code.
+// 'name' doesn't have a duk equivalent.
+#define js_newcfunction(J, f, name, nargs)  \
+    duk_push_c_function(J, mud_wrapper_##f, DUK_VARARGS)
+
+#define mud_newcfunction_runtime(J, f, name, nargs)  \
+             duk_push_c_function(J, f, DUK_VARARGS)
+
+// hacked macro where empty va_args is unsupported. the extra arg (0) should be ignored.
+#define MUD_FMT_HELPER(fn, J, fmt, ...) fn(J, DUK_ERR_UNCAUGHT_ERROR, fmt, __VA_ARGS__)
+#define js_error(...)    MUD_FMT_HELPER(duk_error,             __VA_ARGS__, 0)
+#define js_newerror(...) MUD_FMT_HELPER(duk_push_error_object, __VA_ARGS__, 0)
+
+// userdata - tag is ignored.
+#define js_newuserdata(J, tag, ptr) duk_push_pointer(J, ptr)
+#define js_touserdata(J, idx, tag)  duk_require_pointer(J, idx)
+
+// duktape doesn't really has an equivalent api.
+// It sets the length according to the highest index pushed.
+#define js_setlength(J, idx, len) /* */
+
+static inline void js_setcontext(js_State *J, void *ctx)
+{
+    duk_push_heap_stash(J);
+    duk_push_pointer(J, ctx);
+    duk_put_prop_string(J, -2, "_mud_ctx");
+    duk_pop(J);
+}
+
+static inline void *js_getcontext(js_State *J)
+{
+    duk_push_heap_stash(J);
+    duk_get_prop_string(J, -1, "_mud_ctx");
+    void *ctx = duk_require_pointer(J, -1);
+    duk_pop_n(J, 2);  // -
+    return ctx;
+}
+
+static int js_ploadstring(js_State *J, const char *filename, const char *data)
+{
+    js_pushstring(J, data);
+    js_pushstring(J, filename);
+    return duk_pcompile(J, 0);
+}
+
+#define js_loadstring(J, af, d) { if (js_ploadstring(J, af, d)) duk_throw(J); }
+
+#define js_pushiterator(J, idx, isOwn) duk_enum(J, idx, (isOwn ? DUK_ENUM_OWN_PROPERTIES_ONLY : 0))
+#endif /* MUD_HAVE_DUKTAPE */
+
+static bool mud_push_next_key(js_State *J, int idx)
+{
+#if (MUD_HAVE_DUKTAPE)
+    return duk_next(J, idx, 0);
+#else
+    const char *key = js_nextiterator(J, idx);
+    js_pushstring(J, key);
+#endif
+}
+
+#if (MUD_HAVE_DUKTAPE)
+#define mud_ret_t duk_ret_t
+#else
+#define mud_ret_t void
+#define mud_newcfunction_runtime(J, f, name, nargs) js_newcfunction(J, f, name, nargs)
+#endif
+
+
+
+#if (MUD_HAVE_DUKTAPE) /* mpv specific */
+// mujs c function wrapped with min-args as a static property
+// of the wrapper, rather than dynamic when inserting it
+MUD_WRAPPER(script_run_scripts, 0);
+MUD_WRAPPER(script_suspend, 0);
+MUD_WRAPPER(script_resume, 0);
+MUD_WRAPPER(script_resume_all, 0);
+MUD_WRAPPER(script_wait_event, 1);
+MUD_WRAPPER(script__request_event, 2);
+MUD_WRAPPER(script_find_config_file, 1);
+MUD_WRAPPER(script_command, 1);
+MUD_WRAPPER(script_commandv, 1);
+MUD_WRAPPER(script_command_native, 1);
+MUD_WRAPPER(script_get_property_bool, 2);
+MUD_WRAPPER(script_get_property_number, 2);
+MUD_WRAPPER(script_get_property_native, 2);
+MUD_WRAPPER(script_get_property, 2);
+MUD_WRAPPER(script_get_property_osd, 2);
+MUD_WRAPPER(script_set_property, 2);
+MUD_WRAPPER(script_set_property_bool, 2);
+MUD_WRAPPER(script_set_property_number, 2);
+MUD_WRAPPER(script_set_property_native, 2);
+MUD_WRAPPER(script__observe_property, 3);
+MUD_WRAPPER(script__unobserve_property, 1);
+
+MUD_WRAPPER(script_get_time, 0);
+MUD_WRAPPER(script_get_time_ms, 0);
+MUD_WRAPPER(script_input_define_section, 3);
+MUD_WRAPPER(script_input_enable_section, 2);
+MUD_WRAPPER(script_input_disable_section, 1);
+MUD_WRAPPER(script_input_set_section_mouse_area, 5);
+MUD_WRAPPER(script_format_time, 2);
+MUD_WRAPPER(script_enable_messages, 1);
+MUD_WRAPPER(script_get_wakeup_pipe, 0);
+
+MUD_WRAPPER(script_log, 1);
+MUD_WRAPPER(script_fatal, 0);
+MUD_WRAPPER(script_error, 0);
+MUD_WRAPPER(script_warn, 0);
+MUD_WRAPPER(script_info, 0);
+MUD_WRAPPER(script_verbose, 0);
+MUD_WRAPPER(script_debug, 0);
+
+MUD_WRAPPER(script_getcwd, 0);
+MUD_WRAPPER(script_readdir, 2);
+MUD_WRAPPER(script_split_path, 1);
+MUD_WRAPPER(script_join_path, 2);
+MUD_WRAPPER(script_subprocess_exec, 2);
+MUD_WRAPPER(script_subprocess, 1);
+MUD_WRAPPER(script_read_file, 1);
+MUD_WRAPPER(script_load_file, 1);
+MUD_WRAPPER(script_run_file, 1);
+MUD_WRAPPER(script_gc, 1);
+#endif
+
 
 // List of builtin modules and their contents as strings.
 // All these are generated from player/javascript/*.js
@@ -291,6 +496,7 @@ error_out:
 /**********************************************************************
  *  functions exposed to javascript and helpers
  *********************************************************************/
+
 static int check_loglevel(js_State *J, int idx)
 {
     const char *level = js_tostring(J, idx);
@@ -542,14 +748,19 @@ static int get_object_properties(void *ta_ctx, char ***keys, js_State *J,
     js_pushiterator(J, idx, 1);
     // the vm probably doesn't allocate the strings for us, so iterating them is cheap
     // and saves reallocs for *keys
-    while (js_nextiterator(J, -1))
+    while (mud_push_next_key(J, -1)) {
         length++;
+        js_pop(J, 1);
+    }
     js_pop(J, 1);
 
     js_pushiterator(J, idx, 1);
     *keys = talloc_array(ta_ctx, char *, length);
-    for (int n = 0; n < length; n++)
-        (*keys)[n] = talloc_strdup(ta_ctx, js_nextiterator(J, -1));
+    for (int n = 0; n < length; n++) {
+        mud_push_next_key(J, -1);
+        (*keys)[n] = talloc_strdup(ta_ctx, js_tostring(J, -1));
+        js_pop(J, 1);
+    }
     js_pop(J, 1); // the iterator
 
     return length;
@@ -1036,10 +1247,14 @@ static void script_gc(js_State *J)
     js_pushundefined(J);
 }
 
+#if (MUD_HAVE_DUKTAPE)
+#define FN_ENTRY(name, length) {#name, mud_wrapper_script_ ## name, length}
+#else
 #define FN_ENTRY(name, length) {#name, script_ ## name, length}
+#endif
 struct fn_entry {
     const char *name;
-    void (*fn)(js_State *J);
+    mud_ret_t (*fn)(js_State *J);
     int length;
 };
 
@@ -1101,13 +1316,14 @@ static const struct fn_entry msg_fns[] = {
     {0}
 };
 
+
 // adds an object <module> with the functions at e to the current object on stack
 static void register_package_fns(js_State *J, const char *module,
                                  const struct fn_entry *e)
 {
     js_newobject(J);
     for (int n = 0; e[n].name; n++) {
-        js_newcfunction(J, e[n].fn, e[n].name, e[n].length);
+        mud_newcfunction_runtime(J, e[n].fn, e[n].name, e[n].length);
         js_setproperty(J, -2, e[n].name);
     }
     js_setproperty(J, -2, module);
