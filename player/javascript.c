@@ -125,7 +125,7 @@ mud_wrapper_##f(js_State *J)                      \
 {                                                 \
     duk_push_undefined(J);                        \
     duk_insert(J, 0);                             \
-    for (int i = duk_get_top(J); i < nargs; i++)  \
+    for (int i = duk_get_top(J); i < nargs+1; i++)  \
         duk_push_undefined(J);                    \
     f(J);                                         \
     return 1;                                     \
@@ -146,7 +146,7 @@ mud_wrapper_##f(js_State *J)                      \
 #define js_newerror(...) MUD_FMT_HELPER(duk_push_error_object, __VA_ARGS__, 0)
 
 // userdata - tag is ignored.
-#define js_newuserdata(J, tag, ptr) duk_push_pointer(J, ptr)
+#define js_newuserdata(J, tag, ptr) { duk_pop(J); duk_push_pointer(J, ptr); }
 #define js_touserdata(J, idx, tag)  duk_require_pointer(J, idx)
 
 // duktape doesn't really has an equivalent api.
@@ -525,7 +525,13 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     js_newcfunction(J, script_run_scripts, "run_scripts", 0);
     js_pushglobal(J);
     if (js_pcall(J, 0)) {
+#if (MUD_HAVE_DUKTAPE)
+        js_getproperty(J, -1, "stack");
         MP_FATAL(&ctx, "JS error: %s\n", js_tostring(J, -1));
+        js_pop(J, 1);
+#else
+        MP_FATAL(&ctx, "JS error: %s\n", js_tostring(J, -1));
+#endif
         goto error_out;
     }
 
