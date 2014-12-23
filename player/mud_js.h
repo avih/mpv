@@ -7,20 +7,19 @@
 - Incomplete and could be more efficient, but it's enough for mpv for now.
 
 - include 'mud_js.h' regardless if compiling with MuJS or Duktape.
+  When compiling with MuJS it's mostly no-op except for a thin
+  compatibility layer (e.g. it adds mud_ret_t etc)
 
-- Define USE_MUD_JS (before including mud_js.h) to indicate that Duktape
-  is used. Otherwise for MuJS - it adds a thin compatibility layer
-  (e.g. mud_push_next_key, mud_ret_t etc).
+- #define MUD_USE_DUK 1 (before including mud_js.h) to indicate that
+  Duktape is used, or as 0 to use MuJS.
 
-- Add MUD_WRAPPER(fn, nargs); to add a Duktape wrapper for MuJS' c-function fn
-  Note that this defines nargs statically and completely ignores nargs passed
-  to js_newcfunction and mud_newcfunction_runtime. See below for more info.
+- Add MUD_WRAPPER(fn); to add a Duktape wrapper for MuJS' c-function fn.
   - The macro is a no-op when compiling with MuJS.
 
 - MUD's js_newcfunction works only for function name literals at compile time.
-  If you add function pointers dynamically, use mud_newcfunction_runtime
-  and make sure the function pointer points to the wrapper when USE_MUD_JS,
-  at which case MUD_FNAME may come in handy (in compile time).
+  When adding a function pointer dynamically, use mud_newcfunction_runtime
+  and make sure it points to the wrapper when MUD_USE_DUK is 1,
+  at which case the macro MUD_FNAME could be useful (in compile time).
 
 - Use mud_push_next_key instead of js_nextiterator (Duktape semantics).
 
@@ -33,14 +32,14 @@
 
  *********************************************************************/
 
-#ifdef USE_MUD_JS
-  // Only required if you expand function names in macros yourself.
+#if MUD_USE_DUK
+  // js_newcfunction uses this internally, but may also be useful elsewhere.
   #define MUD_FNAME(fn)  fn ## __mud
 #else
   #define MUD_FNAME(fn)  fn
 #endif
 
-#ifdef USE_MUD_JS
+#if MUD_USE_DUK
 /**********************************************************************
  *  1:1 mapping as far as mpv is concerned (and mostly also otherwise)
  *********************************************************************/
@@ -93,20 +92,13 @@
  *  c-functions interface
  *********************************************************************/
 // Duktape doesn't support MIN_ARGS style nargs which MuJS uses.
-// instead, it supports VAR_ARGS and EXACT_ARGS styles.
-// MUD doesn't solve this problem and instead offers a MUD_WRAPPER
-// macro which takes static nargs and uses it with MIN_ARGS semantics,
-// and completely ignores the runtime nargs value.
-// Be careful if you use dynamic nargs with MuJS.
+// instead, Duktape supports VAR_ARGS and EXACT_ARGS styles.
 //
-// It's possible to define different macros to use this value at runtime,
-// e.g. by storing nargs at duk's 'magic number' store per function when
-// calling MUD's js_newcfunction* functions and then use it at runtime.
-// However, empirical observations suggest that this results in a
-// meaningful performance hit when invoking the wrapper c-functions.
-// Also, static nargs is probably better since it's most likely to be
-// a property of the function rather than a real runtime thingy.
-
+// MUD implements this by always pushing with DUK_VARARGS, but also
+// storing nargs at the function instance 'magic' store when pushing
+// the function, and later MUD_WRAPPER reads this value at runtime and
+// validates the arguments according to the MuJS semantics.
+//
 // - Duktape's use 0 based args index, MuJS use 1 (for actual args)
 //   - add insert.
 // - MuJS functions are always returning something
@@ -124,19 +116,26 @@ duk:  top==1, args=[arg1]
 */
 
 #define js_newcfunction(J, fname, js_name, nargs)           \
-    duk_push_c_function(J, MUD_FNAME(fname), DUK_VARARGS)
+{                                                           \
+    duk_push_c_function(J, MUD_FNAME(fname), DUK_VARARGS);  \
+    duk_set_magic(J, -1, nargs);                            \
+}
 
 #define mud_newcfunction_runtime(J, f_ptr, js_name, nargs)  \
-             duk_push_c_function(J, f_ptr, DUK_VARARGS);
+{                                                           \
+    duk_push_c_function(J, f_ptr, DUK_VARARGS);             \
+    duk_set_magic(J, -1, nargs);                            \
+}
 
 // includes a forward declaration for the wrapped function.
 // Note: hardcoded 'static'. Modify if required.
-#define MUD_WRAPPER(fn, nargs)                      \
+#define MUD_WRAPPER(fn)                             \
   static void fn(js_State*);                        \
   static duk_ret_t MUD_FNAME(fn)(js_State *J)       \
   {                                                 \
       duk_push_this(J);                             \
       duk_insert(J, 0);                             \
+      int nargs = duk_get_current_magic(J);         \
       for (int i = duk_get_top(J); i <= nargs; i++) \
           duk_push_undefined(J);                    \
       fn(J);                                        \
@@ -187,7 +186,7 @@ static inline int js_ploadstring(js_State *J, const char *as_filename,
 
 static int mud_push_next_key(js_State *J, int idx)
 {
-#ifdef USE_MUD_JS
+#if MUD_USE_DUK
     return duk_next(J, idx, 0);
 #else
     const char *key = js_nextiterator(J, idx);
@@ -197,11 +196,11 @@ static int mud_push_next_key(js_State *J, int idx)
 #endif
 }
 
-#ifdef USE_MUD_JS
+#if MUD_USE_DUK
   #define mud_ret_t duk_ret_t
 #else
   #define mud_ret_t void
-  #define MUD_WRAPPER(fn, nargs) /* no-op */
+  #define MUD_WRAPPER(fn) /* no-op */
   #define mud_newcfunction_runtime(J, f, name, nargs) \
            js_newcfunction        (J, f, name, nargs)
 #endif
