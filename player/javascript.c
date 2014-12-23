@@ -47,266 +47,16 @@
 #include "client.h"
 #include "libmpv/client.h"
 
-#define MUD_HAVE_DUKTAPE
-#ifdef MUD_HAVE_DUKTAPE
-#include "duktape/duktape.h"
+#if (HAVE_DUKTAPE)
+  #include "duktape/duktape.h"
+  #define USE_MUD_JS
 #else
-#include <mujs.h>
+  #include <mujs.h>
 #endif
 
+#include "mud_js.h"
 
 #define MAX_LENGTH_COMMANDV 50
-
-/**********************************************************************
-  MUD: MuJS -> Duktape relatively generic wrapper.
-       (Write MuJS code and support Duktape backend too)
-
-Notes:
-
-- Incomplete and could be more efficient, but it's enough for mpv for now.
-  MuJS has a simpler interface, so Duktape can mostly emulate it directly.
-
-- Define MUD_HAVE_DUKTAPE in order to compile with Duktape.
-  Otherwise for MuJS - it adds a thin compatibility layer
-  (e.g. mud_push_next_key, mud_ret_t etc).
-
-- Use MUD_WRAPPER to wrap MuJS c-function names when using Duktape.
-  The wrapper has a slight overhead to achieve similar semantics.
-
-- Duktape and MuJS runtime nargs for c-functions are different.
-  Use js_newcfunction for compile-time wrapped function names.
-  Use mud_newcfunction_runtime for runtime (e.g. from an array).
-  The runtime variant doesn't expand a wrapped function name.
-
-- js_setlength is currently no-op when using Duktape.
-
-- Use mud_push_next_key instead of js_nextiterator (Duktape semantics).
-
-- mud_ret_t is defined as duk_ret_t with Duktape, or void with MuJS.
-
-- An error object can be printed as stacktrace at MuJS, but with Duktape
-  it's its 'stack' property. MUD doesn't provide an abstraction.
-
-- userdata tags are ignored when using Duktape.
-
- *********************************************************************/
-
- #ifdef MUD_HAVE_DUKTAPE
-/**********************************************************************
- *  1:1 mapping as far as mpv is concerned (and mostly also otherwise)
- *********************************************************************/
-#define js_State          duk_context
-#define js_newstate(a,b)  duk_create_heap_default()
-#define js_freestate      duk_destroy_heap
-
-#define js_gettop         duk_get_top
-#define js_pcall          duk_pcall_method
-#define js_call           duk_call_method
-#define js_pop            duk_pop_n
-#define js_throw          duk_throw
-#define js_copy           duk_dup
-#define js_gc             duk_gc
-
-#define js_pushglobal     duk_push_global_object
-#define js_pushundefined  duk_push_undefined
-#define js_pushboolean    duk_push_boolean
-#define js_pushstring     duk_push_string
-#define js_pushlstring    duk_push_lstring
-#define js_pushnumber     duk_push_number
-#define js_pushnull       duk_push_null
-
-#define js_newobject      duk_push_object
-#define js_newarray       duk_push_array
-
-#define js_setproperty    duk_put_prop_string
-#define js_getproperty    duk_get_prop_string
-#define js_getglobal      duk_get_global_string
-#define js_getlength      duk_get_length
-#define js_setindex       duk_put_prop_index
-#define js_getindex       duk_get_prop_index
-#define js_getlength      duk_get_length
-
-#define js_iscallable     duk_is_function
-#define js_isundefined    duk_is_undefined
-#define js_isobject       duk_is_object_coercible
-#define js_isstring       duk_is_string
-#define js_tostring       duk_safe_to_string
-#define js_isnull         duk_is_null
-#define js_isboolean      duk_is_boolean
-#define js_isnumber       duk_is_number
-#define js_isarray        duk_is_array
-
-#define js_tonumber       duk_to_number
-#define js_toboolean      duk_to_boolean
-#define js_tointeger      duk_to_int
-
-/**********************************************************************
- *  MUD_WRAPPER - creates a Duktape function for a MuJS function name
- *********************************************************************/
-// - Duktape's funcs have 0 based index where MuJS is 1 (for actual args)
-//   - add insert.
-// - MuJS functs are always expected to return something
-//   - return 1.
-// - MuJS funcs expect min_args, while duk has abs_args or var_args
-//   - use var_args + pad.
-
-/* example:
-js_call(j, 1) - one arg for a func which expects 2 (nargs==2 at compile time)
-MuJS: top==3, args=[this, arg1, undefined]
-duk:  top==1, args=[arg1]
-     after insertion of 'this': top==2 [undefined, arg1]
-     -- the current code doesn't use 'this' (args[0]) so undefined is enough.
-     after padding: top==3 [undefined, arg1, undefined]
-     -- and the access indices are now identical (positive and negative)
-*/
-
-// includes a forward declaration for the wrapped function.
-#define MUD_WRAPPER(f, nargs)                         \
-static void f(js_State*);                             \
-static duk_ret_t                                      \
-mud_wrapper_ ## f(js_State *J)                        \
-{                                                     \
-    duk_push_undefined(J);                            \
-    duk_insert(J, 0);                                 \
-    for (int i = duk_get_top(J); i < nargs + 1; i++)  \
-        duk_push_undefined(J);                        \
-    f(J);                                             \
-    return 1;                                         \
-}
-
-// Note: nargs is ignored at runtime with duk, but MUD_WRAPPER uses it statically.
-// it's possible to define a more complex wrapper to use runtime arg-ness,
-// but not needed for mpv since it's fixed per function even at runtime.
-// 'name' doesn't have a duk equivalent.
-#define js_newcfunction(J, f, name, nargs)  \
-    duk_push_c_function(J, mud_wrapper_ ## f, DUK_VARARGS)
-
-// Important: validate nargs within f with duk (MUD_WRAPPER func is OK)
-#define mud_newcfunction_runtime(J, f, name, nargs)  \
-             duk_push_c_function(J, f, DUK_VARARGS)
-
-// hacked macro to support empty va_args. the extra arg (0) should be ignored.
-#define MUD_ERR(fn, J, fmt, ...) fn(J, DUK_ERR_UNCAUGHT_ERROR, fmt, __VA_ARGS__)
-#define js_error(...)    MUD_ERR(duk_error,             __VA_ARGS__, 0)
-#define js_newerror(...) MUD_ERR(duk_push_error_object, __VA_ARGS__, 0)
-
-// userdata - tag is ignored.
-#define js_newuserdata(J, tag, ptr) { duk_pop(J); duk_push_pointer(J, ptr); }
-#define js_touserdata(J, idx, tag)  duk_require_pointer(J, idx)
-
-// Duktape doesn't really has an equivalent api.
-// It sets the length according to the highest existing index.
-// It's possible to define a more complex macro for this, but not needed for now.
-#define js_setlength(J, idx, len) /* MUD no-op */
-
-static inline void js_setcontext(js_State *J, void *ctx)
-{
-    duk_push_heap_stash(J);
-    duk_push_pointer(J, ctx);
-    duk_put_prop_string(J, -2, "_mud_ctx");
-    duk_pop(J);
-}
-
-static inline void *js_getcontext(js_State *J)
-{
-    duk_push_heap_stash(J);
-    duk_get_prop_string(J, -1, "_mud_ctx");
-    void *ctx = duk_require_pointer(J, -1);
-    duk_pop_n(J, 2);  // -
-    return ctx;
-}
-
-static int js_ploadstring(js_State *J, const char *as_filename, const char *data)
-{
-    js_pushstring(J, data);
-    js_pushstring(J, as_filename);
-    return duk_pcompile(J, 0);
-}
-
-#define js_loadstring(J, af, d) { if (js_ploadstring(J, af, d)) duk_throw(J); }
-
-#define js_pushiterator(J, idx, isOwn) \
-               duk_enum(J, idx, isOwn ? DUK_ENUM_OWN_PROPERTIES_ONLY : 0)
-
-#endif /* MUD_HAVE_DUKTAPE */
-
-static bool mud_push_next_key(js_State *J, int idx)
-{
-#ifdef MUD_HAVE_DUKTAPE
-    return duk_next(J, idx, 0);
-#else
-    const char *key = js_nextiterator(J, idx);
-    if (key)
-        js_pushstring(J, key);
-    return key ? true : false;
-#endif
-}
-
-#ifdef MUD_HAVE_DUKTAPE
-  #define mud_ret_t duk_ret_t
-#else
-  #define mud_ret_t void
-  #define mud_newcfunction_runtime(J, f, name, nargs) \
-           js_newcfunction        (J, f, name, nargs)
-#endif
-
-
-
-#ifdef MUD_HAVE_DUKTAPE /* mpv specific */
-// mujs c function wrapped with min-args as a static property
-// of the wrapper, rather than dynamic when inserting it
-MUD_WRAPPER(script_run_scripts, 0);
-MUD_WRAPPER(script_suspend, 0);
-MUD_WRAPPER(script_resume, 0);
-MUD_WRAPPER(script_resume_all, 0);
-MUD_WRAPPER(script_wait_event, 1);
-MUD_WRAPPER(script__request_event, 2);
-MUD_WRAPPER(script_find_config_file, 1);
-MUD_WRAPPER(script_command, 1);
-MUD_WRAPPER(script_commandv, 1);
-MUD_WRAPPER(script_command_native, 1);
-MUD_WRAPPER(script_get_property_bool, 2);
-MUD_WRAPPER(script_get_property_number, 2);
-MUD_WRAPPER(script_get_property_native, 2);
-MUD_WRAPPER(script_get_property, 2);
-MUD_WRAPPER(script_get_property_osd, 2);
-MUD_WRAPPER(script_set_property, 2);
-MUD_WRAPPER(script_set_property_bool, 2);
-MUD_WRAPPER(script_set_property_number, 2);
-MUD_WRAPPER(script_set_property_native, 2);
-MUD_WRAPPER(script__observe_property, 3);
-MUD_WRAPPER(script__unobserve_property, 1);
-
-MUD_WRAPPER(script_get_time, 0);
-MUD_WRAPPER(script_get_time_ms, 0);
-MUD_WRAPPER(script_input_define_section, 3);
-MUD_WRAPPER(script_input_enable_section, 2);
-MUD_WRAPPER(script_input_disable_section, 1);
-MUD_WRAPPER(script_input_set_section_mouse_area, 5);
-MUD_WRAPPER(script_format_time, 2);
-MUD_WRAPPER(script_enable_messages, 1);
-MUD_WRAPPER(script_get_wakeup_pipe, 0);
-
-MUD_WRAPPER(script_log, 1);
-MUD_WRAPPER(script_fatal, 0);
-MUD_WRAPPER(script_error, 0);
-MUD_WRAPPER(script_warn, 0);
-MUD_WRAPPER(script_info, 0);
-MUD_WRAPPER(script_verbose, 0);
-MUD_WRAPPER(script_debug, 0);
-
-MUD_WRAPPER(script_getcwd, 0);
-MUD_WRAPPER(script_readdir, 2);
-MUD_WRAPPER(script_split_path, 1);
-MUD_WRAPPER(script_join_path, 2);
-MUD_WRAPPER(script_subprocess_exec, 2);
-MUD_WRAPPER(script_subprocess, 1);
-MUD_WRAPPER(script_read_file, 1);
-MUD_WRAPPER(script_load_file, 1);
-MUD_WRAPPER(script_run_file, 1);
-MUD_WRAPPER(script_gc, 1);
-#endif
-
 
 // List of builtin modules and their contents as strings.
 // All these are generated from player/javascript/*.js
@@ -446,12 +196,14 @@ static void push_file_content(js_State *J, int idx)
     talloc_free(s);
 }
 
+MUD_WRAPPER(script_read_file, 1);
 static void script_read_file(js_State *J)
 {
     push_file_content(J, 1);
 }
 
 // args: filename, returns the file as a js function
+MUD_WRAPPER(script_load_file, 1);
 static void script_load_file(js_State *J)
 {
     push_file_content(J, 1);
@@ -459,6 +211,7 @@ static void script_load_file(js_State *J)
 }
 
 // args: filename, runs the content as js at the global scope
+MUD_WRAPPER(script_run_file, 1);
 static void script_run_file(js_State *J)
 {
     push_file_content(J, 1);
@@ -488,6 +241,7 @@ static void run_file(js_State *J, const char *fname)
 }
 
 // called as script, leaves result on stack or throws
+MUD_WRAPPER(script_run_scripts, 0);
 static void script_run_scripts(js_State *J)
 {
     add_functions(get_ctx(J));
@@ -532,7 +286,7 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     js_newcfunction(J, script_run_scripts, "run_scripts", 0);
     js_pushglobal(J);
     if (js_pcall(J, 0)) {
-#ifdef MUD_HAVE_DUKTAPE
+#ifdef USE_MUD_JS
         js_getproperty(J, -1, "stack");
         MP_FATAL(&ctx, "JS error: %s\n", js_tostring(J, -1));
         js_pop(J, 1);
@@ -581,6 +335,7 @@ static void finalize_log(int msgl, js_State *J, int fromIdx)
 // All the log functions are at mp.msg
 
 // args: level as string and the rest are strings to log
+MUD_WRAPPER(script_log, 1);
 static void script_log(js_State *J)
 {
     finalize_log(check_loglevel(J, 1), J, 2);
@@ -588,6 +343,12 @@ static void script_log(js_State *J)
 
 #define LOG_BODY(mlevel) { finalize_log(mlevel, J, 1); }
 // args: strings to log
+MUD_WRAPPER(script_fatal, 0);
+MUD_WRAPPER(script_error, 0);
+MUD_WRAPPER(script_warn, 0);
+MUD_WRAPPER(script_info, 0);
+MUD_WRAPPER(script_verbose, 0);
+MUD_WRAPPER(script_debug, 0);
 static void script_fatal(js_State *J)   LOG_BODY(MSGL_FATAL)
 static void script_error(js_State *J)   LOG_BODY(MSGL_ERR)
 static void script_warn(js_State *J)    LOG_BODY(MSGL_WARN)
@@ -595,6 +356,7 @@ static void script_info(js_State *J)    LOG_BODY(MSGL_INFO)
 static void script_verbose(js_State *J) LOG_BODY(MSGL_V)
 static void script_debug(js_State *J)   LOG_BODY(MSGL_DEBUG)
 
+MUD_WRAPPER(script_find_config_file, 1);
 static void script_find_config_file(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -609,18 +371,21 @@ static void script_find_config_file(js_State *J)
     talloc_free(path);
 }
 
+MUD_WRAPPER(script_suspend, 0);
 static void script_suspend(js_State *J)
 {
     mpv_suspend(client_js(J));
     js_pushundefined(J);
 }
 
+MUD_WRAPPER(script_resume, 0);
 static void script_resume(js_State *J)
 {
     mpv_resume(client_js(J));
     js_pushundefined(J);
 }
 
+MUD_WRAPPER(script_resume_all, 0);
 static void script_resume_all(js_State *J)
 {
     mp_resume_all(client_js(J));
@@ -630,6 +395,7 @@ static void script_resume_all(js_State *J)
 static void pushnode(js_State *J, mpv_node *node);
 
 // args: timeout. if undefined or negative, uses 1e20 as an alias for 'forever'
+MUD_WRAPPER(script_wait_event, 1);
 static void script_wait_event(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -713,6 +479,7 @@ static void script_wait_event(js_State *J)
     return;
 }
 
+MUD_WRAPPER(script__request_event, 2);
 static void script__request_event(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -731,6 +498,7 @@ static void script__request_event(js_State *J)
 }
 
 // TODO: untested
+MUD_WRAPPER(script_enable_messages, 1);
 static void script_enable_messages(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -740,12 +508,14 @@ static void script_enable_messages(js_State *J)
 }
 
 //args - command [with arguments] as string
+MUD_WRAPPER(script_command, 1);
 static void script_command(js_State *J)
 {
     pushStatus(J, mpv_command_string(client_js(J), js_tostring(J, 1)));
 }
 
 //args: strings of command and then variable number of arguments
+MUD_WRAPPER(script_commandv, 1);
 static void script_commandv(js_State *J)
 {
     const char *args[MAX_LENGTH_COMMANDV + 1];
@@ -763,6 +533,7 @@ static void script_commandv(js_State *J)
 }
 
 //args: name, string value
+MUD_WRAPPER(script_set_property, 2);
 static void script_set_property(js_State *J)
 {
     pushStatus(J, mpv_set_property_string(client_js(J),
@@ -771,6 +542,7 @@ static void script_set_property(js_State *J)
 }
 
 // args: name, boolean
+MUD_WRAPPER(script_set_property_bool, 2);
 static void script_set_property_bool(js_State *J)
 {
     int v = js_toboolean(J, 2);
@@ -786,6 +558,7 @@ static bool is_int(double d)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_number, 2);
 static void script_get_property_number(js_State *J)
 {
     double result;
@@ -880,6 +653,7 @@ static void makenode(void *ta_ctx, mpv_node *dst, js_State *J, int idx)
 }
 
 //args: name, native value
+MUD_WRAPPER(script_set_property_native, 2);
 static void script_set_property_native(js_State *J)
 {
     mpv_node node;
@@ -893,6 +667,7 @@ static void script_set_property_native(js_State *J)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property, 2);
 static void script_get_property(js_State *J)
 {
     char *result = NULL;
@@ -905,6 +680,7 @@ static void script_get_property(js_State *J)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_bool, 2);
 static void script_get_property_bool(js_State *J)
 {
     int result;
@@ -916,6 +692,7 @@ static void script_get_property_bool(js_State *J)
 }
 
 //args: name, number
+MUD_WRAPPER(script_set_property_number, 2);
 static void script_set_property_number(js_State *J)
 {
     double v = js_tonumber(J, 2);
@@ -958,6 +735,7 @@ static void pushnode(js_State *J, mpv_node *node)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_native, 2);
 static void script_get_property_native(js_State *J)
 {
     mpv_node result;
@@ -971,6 +749,7 @@ static void script_get_property_native(js_State *J)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_osd, 2);
 static void script_get_property_osd(js_State *J)
 {
     char *result = NULL;
@@ -983,6 +762,7 @@ static void script_get_property_osd(js_State *J)
 }
 
 //args: id, name, type
+MUD_WRAPPER(script__observe_property, 3);
 static void script__observe_property(js_State *J)
 {
     pushStatus(J, mpv_observe_property(client_js(J),
@@ -992,12 +772,14 @@ static void script__observe_property(js_State *J)
 }
 
 //args: id
+MUD_WRAPPER(script__unobserve_property, 1);
 static void script__unobserve_property(js_State *J)
 {
     pushStatus(J, mpv_unobserve_property(client_js(J), js_tonumber(J, 1)));
 }
 
 //args: native (node)
+MUD_WRAPPER(script_command_native, 1);
 static void script_command_native(js_State *J)
 {
     mpv_node cmd;
@@ -1012,18 +794,21 @@ static void script_command_native(js_State *J)
 }
 
 //args: none, result in seconds
+MUD_WRAPPER(script_get_time, 0);
 static void script_get_time(js_State *J)
 {
     js_pushnumber(J, mpv_get_time_us(client_js(J)) / (double)(1000 * 1000));
 }
 
 //args: none, result in millisec
+MUD_WRAPPER(script_get_time_ms, 0);
 static void script_get_time_ms(js_State *J)
 {
     js_pushnumber(J, mpv_get_time_us(client_js(J)) / (double)(1000));
 }
 
 // args: section, content [,flags]
+MUD_WRAPPER(script_input_define_section, 3);
 static void script_input_define_section(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -1045,6 +830,7 @@ static void script_input_define_section(js_State *J)
 }
 
 // args: section [,flags]
+MUD_WRAPPER(script_input_enable_section, 2);
 static void script_input_enable_section(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -1069,6 +855,7 @@ static void script_input_enable_section(js_State *J)
 }
 
 // args: section
+MUD_WRAPPER(script_input_disable_section, 1);
 static void script_input_disable_section(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -1076,6 +863,7 @@ static void script_input_disable_section(js_State *J)
     mp_input_disable_section(mpctx->input, section);
 }
 
+MUD_WRAPPER(script_format_time, 2);
 static void script_format_time(js_State *J)
 {
     double t = js_tonumber(J, 1);
@@ -1088,12 +876,14 @@ static void script_format_time(js_State *J)
 }
 
 // TODO: untested
+MUD_WRAPPER(script_get_wakeup_pipe, 0);
 static void script_get_wakeup_pipe(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     js_pushnumber(J, mpv_get_wakeup_pipe(ctx->client));
 }
 
+MUD_WRAPPER(script_getcwd, 0);
 static void script_getcwd(js_State *J)
 {
     char *cwd = mp_getcwd(NULL);
@@ -1128,6 +918,7 @@ static int checkoption(js_State *J, int idx, const char *def,
     js_error(J, "Unknown option");
 }
 
+MUD_WRAPPER(script_readdir, 2);
 static void script_readdir(js_State *J)
 {
     //                    0      1        2       3
@@ -1167,6 +958,7 @@ static void script_readdir(js_State *J)
     talloc_free(fullpath);
 }
 
+MUD_WRAPPER(script_split_path, 1);
 static void script_split_path(js_State *J)
 {
     const char *p = js_tostring(J, 1);
@@ -1178,6 +970,7 @@ static void script_split_path(js_State *J)
     js_setindex(J, -2, 1);
 }
 
+MUD_WRAPPER(script_join_path, 2);
 static void script_join_path(js_State *J)
 {
     const char *p1 = js_tostring(J, 1);
@@ -1212,6 +1005,7 @@ static void subprocess_stderr(void *p, char *data, size_t size)
 }
 
 //args: client invocation args object, and a userdata object with talloc context to be used
+MUD_WRAPPER(script_subprocess_exec, 2);
 static void script_subprocess_exec(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -1277,6 +1071,7 @@ static void script_subprocess_exec(js_State *J)
 
 // since subprocess_exec can fail in several places, we allocate the memory in advance
 // and pcall it, then release the data regardless if succeeded or failed.
+MUD_WRAPPER(script_subprocess, 1);
 static void script_subprocess(js_State *J)
 {
     void *tmp = talloc_new(NULL);
@@ -1298,17 +1093,14 @@ static void script_subprocess(js_State *J)
 #endif
 
 //args: number - print
+MUD_WRAPPER(script_gc, 1);
 static void script_gc(js_State *J)
 {
     js_gc(J, js_tonumber(J, 1));
     js_pushundefined(J);
 }
 
-#ifdef MUD_HAVE_DUKTAPE
-#define FN_ENTRY(name, length) {#name, mud_wrapper_script_ ## name, length}
-#else
-#define FN_ENTRY(name, length) {#name, script_ ## name, length}
-#endif
+#define FN_ENTRY(name, length) {#name, MUD_FNAME(script_ ## name), length}
 struct fn_entry {
     const char *name;
     mud_ret_t (*fn)(js_State *J);
