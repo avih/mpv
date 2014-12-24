@@ -179,6 +179,8 @@ static inline int js_ploadstring(js_State *J, const char *as_filename,
     return duk_pcompile(J, 0);
 }
 
+#define js_loadstring(J, af, d) { if (js_ploadstring(J, af, d)) duk_throw(J); }
+
 #define js_pushiterator(J, idx, isOwn) \
                duk_enum(J, idx, isOwn ? DUK_ENUM_OWN_PROPERTIES_ONLY : 0)
 

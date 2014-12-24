@@ -148,35 +148,6 @@ static void pushStatus(js_State *J, int err)
 /**********************************************************************
  *  Initialization and files reading/loading/running
  *********************************************************************/
-
-enum FILE_COMMAND {
-    FILE_READ, // pushes the file's content as (null terminated) string
-    FILE_LOAD, // compiles the file to js and pushes it as a js function
-    FILE_RUN   // compiles + runs the file and pushes the result
-};
-
-static void push_file_result(js_State *J, enum FILE_COMMAND command,
-                             const char *filename);
-
-MUD_WRAPPER(script_read_file);
-static void script_read_file(js_State *J)
-{
-    push_file_result(J, FILE_READ, js_tostring(J, 1));
-}
-
-MUD_WRAPPER(script_load_file);
-static void script_load_file(js_State *J)
-{
-    push_file_result(J, FILE_LOAD, js_tostring(J, 1));
-}
-
-MUD_WRAPPER(script_run_file);
-static void script_run_file(js_State *J)
-{
-    push_file_result(J, FILE_RUN, js_tostring(J, 1));
-}
-
-/// file functions helper:
 static const char *get_builtin_file(const char *name)
 {
     for (int n = 0; builtin_files[n][0]; n++)
@@ -185,82 +156,69 @@ static const char *get_builtin_file(const char *name)
     return NULL;
 }
 
-// executes the command and pushes the result or throws an error
-// filename is taken as is, unless it starts with '@', at which case it's read from builtin_files.
-static void push_file_result(js_State *J, enum FILE_COMMAND command,
-                             const char *filename)
+// filename is searched at builtin_files, and if not found then from the OS.
+// pushes the content to the stack or throws an error.
+static void push_file_content(js_State *J, int idx)
 {
-    if (!filename || !filename[0])
-        js_error(J, "invalid file name");
+    if (!js_isstring(J, idx))
+        js_error(J, "filename must be strictly a string");
+    char *s, *filename = (char*)js_tostring(J, idx);
 
-    FILE *f;
-    char *s = NULL;
-    const char *data;
-
-    if (filename[0] == '@') {
-        data = get_builtin_file(filename);
-        if (!data)
-            js_error(J, "cannot find built in file '%s'", filename);
-
-    } else {
-        int n, t;
-
-        f = fopen(filename, "rb");
-        if (!f)
-            js_error(J, "cannot open file: '%s'", filename);
-
-        if (fseek(f, 0, SEEK_END) < 0) {
-            fclose(f);
-            js_error(J, "cannot seek in file: '%s'", filename);
-        }
-        n = ftell(f);
-        fseek(f, 0, SEEK_SET);
-
-        s = talloc_array(NULL, char, n + 1);
-        if (!s) {
-            fclose(f);
-            js_error(J, "cannot allocate storage for file contents: '%s'",
-                     filename);
-        }
-
-        t = fread(s, 1, n, f);
-        if (t != n) {
-            talloc_free(s);
-            fclose(f);
-            js_error(J, "cannot read data from file: '%s'", filename);
-        }
-
-        s[n] = 0;
-        data = s;
+    if (s = (char*)get_builtin_file(filename)) {
+        js_pushstring(J, s);
+        return;
     }
 
-    int err;
-    switch (command) {
-    case FILE_READ:
-        js_pushstring(J, data);
-        err = 0;
-        break;
-    case FILE_LOAD:
-        err = js_ploadstring(J, filename, data);
-        break;
-    case FILE_RUN:
-        if (err = js_ploadstring(J, filename, data))
-            break;
-        js_pushglobal(J);
-        err = js_pcall(J, 0);
-        break;
-    default:
-        js_newerror(J, "unknown file command");
-        err = -1;
-    }
+    FILE *f = fopen(filename, "rb");
+    if (!f)
+        js_error(J, "cannot open file: '%s'", filename);
 
-    if (s) {
-        talloc_free(s);
+    if (fseek(f, 0, SEEK_END) < 0) {
         fclose(f);
+        js_error(J, "cannot seek in file: '%s'", filename);
+    }
+    int n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    s = talloc_array(NULL, char, n);
+    if (!s) {
+        fclose(f);
+        js_error(J, "cannot allocate %d bytes for file: '%s'", n, filename);
     }
 
-    if (err)
-        js_throw(J);
+    int t = fread(s, 1, n, f);
+    fclose(f);
+    if (t != n) {
+        talloc_free(s);
+        js_error(J, "cannot read data from file: '%s'", filename);
+    }
+
+    js_pushlstring(J, s, n);
+    talloc_free(s);
+}
+
+MUD_WRAPPER(script_read_file);
+static void script_read_file(js_State *J)
+{
+    push_file_content(J, 1);
+}
+
+// args: filename, returns the file as a js function
+MUD_WRAPPER(script_load_file);
+static void script_load_file(js_State *J)
+{
+    push_file_content(J, 1);
+    js_loadstring(J, js_tostring(J, 1), js_tostring(J, 2));
+}
+
+// args: filename, runs the content as js at the global scope
+MUD_WRAPPER(script_run_file);
+static void script_run_file(js_State *J)
+{
+    push_file_content(J, 1);
+    js_loadstring(J, js_tostring(J, 1), js_tostring(J, 2));
+    js_pushglobal(J);
+    js_call(J, 0); // and call it.
 }
 
 static void add_functions(struct script_ctx *ctx);
@@ -289,7 +247,6 @@ static void script_run_scripts(js_State *J)
 {
     add_functions(get_ctx(J));
     run_file(J, "@defaults.js");
-    //run_file(J, "player/javascript/defaults.js"); // useful for development to read from the filesystem instead of embedded.
     run_file(J, get_ctx(J)->filename);  // the main file for this script
 
     js_getglobal(J, "mp_event_loop"); // fn

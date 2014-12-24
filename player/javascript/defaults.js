@@ -15,6 +15,9 @@ if (typeof Duktape != "undefined") {
   delete Duktape;
 }
 
+mp.utils.js_engine = _Duktape ? "Duktape" : "MuJS";
+mp.msg.verbose("Javascript engine:", mp.utils.js_engine);
+
 mp.utils.get_exception_str = function(e) {
   // With Duktape, e.stack is not enumerable, so dump(e) won't display it.
   // With MuJS, e is the whole stack trace as string.
