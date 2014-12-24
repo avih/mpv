@@ -14,7 +14,7 @@
   Duktape is used, or as 0 to use MuJS.
 
 - Add MUD_WRAPPER(fn); to add a Duktape wrapper for MuJS' c-function fn.
-  - The macro is a no-op when compiling with MuJS.
+  Alternatively, replace the prototype with MUD_C_FUNC(foo, js_State *bar)
 
 - MUD's js_newcfunction works only for function name literals at compile time.
   When adding a function pointer dynamically, use mud_newcfunction_runtime
@@ -219,3 +219,7 @@ static int mud_push_next_key(js_State *J, int idx)
     return key ? 1 : 0;
 #endif
 }
+
+#define MUD_C_FUNC(fname, state_decleration) \
+  MUD_WRAPPER(fname);                \
+  static void fname(state_decleration) /* body should follow */

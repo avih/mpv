@@ -55,6 +55,7 @@
 
 #define MUD_USE_DUK HAVE_DUKTAPE
 #include "mud_js.h"
+#define JS_C_FUNC MUD_C_FUNC
 
 #define MAX_LENGTH_COMMANDV 50
 
@@ -241,8 +242,7 @@ static void run_file(js_State *J, const char *fname)
 }
 
 // called as script, leaves result on stack or throws
-MUD_WRAPPER(script_run_scripts);
-static void script_run_scripts(js_State *J)
+JS_C_FUNC(script_run_scripts, js_State *J)
 {
     add_functions(get_ctx(J));
     run_file(J, "@defaults.js");
@@ -330,29 +330,21 @@ static void finalize_log(int msgl, js_State *J, int fromIdx)
 // All the log functions are at mp.msg
 
 // args: level as string and the rest are strings to log
-MUD_WRAPPER(script_log);
-static void script_log(js_State *J)
+JS_C_FUNC(script_log, js_State *J)
 {
     finalize_log(check_loglevel(J, 1), J, 2);
 }
 
 #define LOG_BODY(mlevel) { finalize_log(mlevel, J, 1); }
 // args: strings to log
-MUD_WRAPPER(script_fatal);
-MUD_WRAPPER(script_error);
-MUD_WRAPPER(script_warn);
-MUD_WRAPPER(script_info);
-MUD_WRAPPER(script_verbose);
-MUD_WRAPPER(script_debug);
-static void script_fatal(js_State *J)   LOG_BODY(MSGL_FATAL)
-static void script_error(js_State *J)   LOG_BODY(MSGL_ERR)
-static void script_warn(js_State *J)    LOG_BODY(MSGL_WARN)
-static void script_info(js_State *J)    LOG_BODY(MSGL_INFO)
-static void script_verbose(js_State *J) LOG_BODY(MSGL_V)
-static void script_debug(js_State *J)   LOG_BODY(MSGL_DEBUG)
+JS_C_FUNC(script_fatal, js_State *J)   LOG_BODY(MSGL_FATAL)
+JS_C_FUNC(script_error, js_State *J)   LOG_BODY(MSGL_ERR)
+JS_C_FUNC(script_warn, js_State *J)    LOG_BODY(MSGL_WARN)
+JS_C_FUNC(script_info, js_State *J)    LOG_BODY(MSGL_INFO)
+JS_C_FUNC(script_verbose, js_State *J) LOG_BODY(MSGL_V)
+JS_C_FUNC(script_debug, js_State *J)   LOG_BODY(MSGL_DEBUG)
 
-MUD_WRAPPER(script_find_config_file);
-static void script_find_config_file(js_State *J)
+JS_C_FUNC(script_find_config_file, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
     const char *s = js_tostring(J, 1);
@@ -366,22 +358,19 @@ static void script_find_config_file(js_State *J)
     talloc_free(path);
 }
 
-MUD_WRAPPER(script_suspend);
-static void script_suspend(js_State *J)
+JS_C_FUNC(script_suspend, js_State *J)
 {
     mpv_suspend(client_js(J));
     js_pushundefined(J);
 }
 
-MUD_WRAPPER(script_resume);
-static void script_resume(js_State *J)
+JS_C_FUNC(script_resume, js_State *J)
 {
     mpv_resume(client_js(J));
     js_pushundefined(J);
 }
 
-MUD_WRAPPER(script_resume_all);
-static void script_resume_all(js_State *J)
+JS_C_FUNC(script_resume_all, js_State *J)
 {
     mp_resume_all(client_js(J));
     js_pushundefined(J);
@@ -390,8 +379,7 @@ static void script_resume_all(js_State *J)
 static void pushnode(js_State *J, mpv_node *node);
 
 // args: timeout. if undefined or negative, uses 1e20 as an alias for 'forever'
-MUD_WRAPPER(script_wait_event);
-static void script_wait_event(js_State *J)
+JS_C_FUNC(script_wait_event, js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     int top = js_gettop(J);
@@ -474,8 +462,7 @@ static void script_wait_event(js_State *J)
     return;
 }
 
-MUD_WRAPPER(script__request_event);
-static void script__request_event(js_State *J)
+JS_C_FUNC(script__request_event, js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     const char *event = js_tostring(J, 1);
@@ -493,8 +480,7 @@ static void script__request_event(js_State *J)
 }
 
 // TODO: untested
-MUD_WRAPPER(script_enable_messages);
-static void script_enable_messages(js_State *J)
+JS_C_FUNC(script_enable_messages, js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     check_loglevel(J, 1);
@@ -503,15 +489,13 @@ static void script_enable_messages(js_State *J)
 }
 
 //args - command [with arguments] as string
-MUD_WRAPPER(script_command);
-static void script_command(js_State *J)
+JS_C_FUNC(script_command, js_State *J)
 {
     pushStatus(J, mpv_command_string(client_js(J), js_tostring(J, 1)));
 }
 
 //args: strings of command and then variable number of arguments
-MUD_WRAPPER(script_commandv);
-static void script_commandv(js_State *J)
+JS_C_FUNC(script_commandv, js_State *J)
 {
     const char *args[MAX_LENGTH_COMMANDV + 1];
     unsigned int length = js_gettop(J);
@@ -528,8 +512,7 @@ static void script_commandv(js_State *J)
 }
 
 //args: name, string value
-MUD_WRAPPER(script_set_property);
-static void script_set_property(js_State *J)
+JS_C_FUNC(script_set_property, js_State *J)
 {
     pushStatus(J, mpv_set_property_string(client_js(J),
                                           js_tostring(J, 1),
@@ -537,8 +520,7 @@ static void script_set_property(js_State *J)
 }
 
 // args: name, boolean
-MUD_WRAPPER(script_set_property_bool);
-static void script_set_property_bool(js_State *J)
+JS_C_FUNC(script_set_property_bool, js_State *J)
 {
     int v = js_toboolean(J, 2);
     pushStatus(J, mpv_set_property(client_js(J),
@@ -553,8 +535,7 @@ static bool is_int(double d)
 }
 
 //args: name [,def]
-MUD_WRAPPER(script_get_property_number);
-static void script_get_property_number(js_State *J)
+JS_C_FUNC(script_get_property_number, js_State *J)
 {
     double result;
     if (!handledAsErrDef(J, mpv_get_property(client_js(J),
@@ -648,8 +629,7 @@ static void makenode(void *ta_ctx, mpv_node *dst, js_State *J, int idx)
 }
 
 //args: name, native value
-MUD_WRAPPER(script_set_property_native);
-static void script_set_property_native(js_State *J)
+JS_C_FUNC(script_set_property_native, js_State *J)
 {
     mpv_node node;
     void *tmp = talloc_new(NULL);
@@ -662,8 +642,7 @@ static void script_set_property_native(js_State *J)
 }
 
 //args: name [,def]
-MUD_WRAPPER(script_get_property);
-static void script_get_property(js_State *J)
+JS_C_FUNC(script_get_property, js_State *J)
 {
     char *result = NULL;
     if (!handledAsErrDef(J, mpv_get_property(client_js(J), js_tostring(J, 1),
@@ -675,8 +654,7 @@ static void script_get_property(js_State *J)
 }
 
 //args: name [,def]
-MUD_WRAPPER(script_get_property_bool);
-static void script_get_property_bool(js_State *J)
+JS_C_FUNC(script_get_property_bool, js_State *J)
 {
     int result;
     if (!handledAsErrDef(J, mpv_get_property(client_js(J), js_tostring(J, 1),
@@ -687,8 +665,7 @@ static void script_get_property_bool(js_State *J)
 }
 
 //args: name, number
-MUD_WRAPPER(script_set_property_number);
-static void script_set_property_number(js_State *J)
+JS_C_FUNC(script_set_property_number, js_State *J)
 {
     double v = js_tonumber(J, 2);
     pushStatus(J, mpv_set_property(client_js(J), js_tostring(J, 1),
@@ -730,8 +707,7 @@ static void pushnode(js_State *J, mpv_node *node)
 }
 
 //args: name [,def]
-MUD_WRAPPER(script_get_property_native);
-static void script_get_property_native(js_State *J)
+JS_C_FUNC(script_get_property_native, js_State *J)
 {
     mpv_node result;
     if (!handledAsErrDef(J, mpv_get_property(client_js(J),
@@ -744,8 +720,7 @@ static void script_get_property_native(js_State *J)
 }
 
 //args: name [,def]
-MUD_WRAPPER(script_get_property_osd);
-static void script_get_property_osd(js_State *J)
+JS_C_FUNC(script_get_property_osd, js_State *J)
 {
     char *result = NULL;
     if (!handledAsErrDef(J, mpv_get_property(client_js(J), js_tostring(J, 1),
@@ -757,8 +732,7 @@ static void script_get_property_osd(js_State *J)
 }
 
 //args: id, name, type
-MUD_WRAPPER(script__observe_property);
-static void script__observe_property(js_State *J)
+JS_C_FUNC(script__observe_property, js_State *J)
 {
     pushStatus(J, mpv_observe_property(client_js(J),
                                        js_tonumber(J, 1),
@@ -767,15 +741,13 @@ static void script__observe_property(js_State *J)
 }
 
 //args: id
-MUD_WRAPPER(script__unobserve_property);
-static void script__unobserve_property(js_State *J)
+JS_C_FUNC(script__unobserve_property, js_State *J)
 {
     pushStatus(J, mpv_unobserve_property(client_js(J), js_tonumber(J, 1)));
 }
 
 //args: native (node)
-MUD_WRAPPER(script_command_native);
-static void script_command_native(js_State *J)
+JS_C_FUNC(script_command_native, js_State *J)
 {
     mpv_node cmd;
     mpv_node result;
@@ -789,22 +761,19 @@ static void script_command_native(js_State *J)
 }
 
 //args: none, result in seconds
-MUD_WRAPPER(script_get_time);
-static void script_get_time(js_State *J)
+JS_C_FUNC(script_get_time, js_State *J)
 {
     js_pushnumber(J, mpv_get_time_us(client_js(J)) / (double)(1000 * 1000));
 }
 
 //args: none, result in millisec
-MUD_WRAPPER(script_get_time_ms);
-static void script_get_time_ms(js_State *J)
+JS_C_FUNC(script_get_time_ms, js_State *J)
 {
     js_pushnumber(J, mpv_get_time_us(client_js(J)) / (double)(1000));
 }
 
 // args: section, content [,flags]
-MUD_WRAPPER(script_input_define_section);
-static void script_input_define_section(js_State *J)
+JS_C_FUNC(script_input_define_section, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
     char *section = (char *)js_tostring(J, 1);
@@ -825,8 +794,7 @@ static void script_input_define_section(js_State *J)
 }
 
 // args: section [,flags]
-MUD_WRAPPER(script_input_enable_section);
-static void script_input_enable_section(js_State *J)
+JS_C_FUNC(script_input_enable_section, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
     char *section = (char *)js_tostring(J, 1);
@@ -850,16 +818,14 @@ static void script_input_enable_section(js_State *J)
 }
 
 // args: section
-MUD_WRAPPER(script_input_disable_section);
-static void script_input_disable_section(js_State *J)
+JS_C_FUNC(script_input_disable_section, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
     char *section = (char *)js_tostring(J, 1);
     mp_input_disable_section(mpctx->input, section);
 }
 
-MUD_WRAPPER(script_format_time);
-static void script_format_time(js_State *J)
+JS_C_FUNC(script_format_time, js_State *J)
 {
     double t = js_tonumber(J, 1);
     const char *fmt = js_isundefined(J, 2) ? "%H:%M:%S" : js_tostring(J, 2);
@@ -871,15 +837,13 @@ static void script_format_time(js_State *J)
 }
 
 // TODO: untested
-MUD_WRAPPER(script_get_wakeup_pipe);
-static void script_get_wakeup_pipe(js_State *J)
+JS_C_FUNC(script_get_wakeup_pipe, js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     js_pushnumber(J, mpv_get_wakeup_pipe(ctx->client));
 }
 
-MUD_WRAPPER(script_getcwd);
-static void script_getcwd(js_State *J)
+JS_C_FUNC(script_getcwd, js_State *J)
 {
     char *cwd = mp_getcwd(NULL);
     if (!cwd) {
@@ -913,8 +877,7 @@ static int checkoption(js_State *J, int idx, const char *def,
     js_error(J, "Unknown option");
 }
 
-MUD_WRAPPER(script_readdir);
-static void script_readdir(js_State *J)
+JS_C_FUNC(script_readdir, js_State *J)
 {
     //                    0      1        2       3
     const char *fmts[] = {"all", "files", "dirs", "normal", NULL};
@@ -953,8 +916,7 @@ static void script_readdir(js_State *J)
     talloc_free(fullpath);
 }
 
-MUD_WRAPPER(script_split_path);
-static void script_split_path(js_State *J)
+JS_C_FUNC(script_split_path, js_State *J)
 {
     const char *p = js_tostring(J, 1);
     bstr fname = mp_dirname(p);
@@ -965,8 +927,7 @@ static void script_split_path(js_State *J)
     js_setindex(J, -2, 1);
 }
 
-MUD_WRAPPER(script_join_path);
-static void script_join_path(js_State *J)
+JS_C_FUNC(script_join_path, js_State *J)
 {
     const char *p1 = js_tostring(J, 1);
     const char *p2 = js_tostring(J, 2);
@@ -1000,8 +961,7 @@ static void subprocess_stderr(void *p, char *data, size_t size)
 }
 
 //args: client invocation args object, and a userdata object with talloc context to be used
-MUD_WRAPPER(script_subprocess_exec);
-static void script_subprocess_exec(js_State *J)
+JS_C_FUNC(script_subprocess_exec, js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     if (!js_isobject(J, 1))
@@ -1066,8 +1026,7 @@ static void script_subprocess_exec(js_State *J)
 
 // since subprocess_exec can fail in several places, we allocate the memory in advance
 // and pcall it, then release the data regardless if succeeded or failed.
-MUD_WRAPPER(script_subprocess);
-static void script_subprocess(js_State *J)
+JS_C_FUNC(script_subprocess, js_State *J)
 {
     void *tmp = talloc_new(NULL);
     js_newcfunction(J, script_subprocess_exec, "subprocess_exec", 2);
@@ -1088,8 +1047,7 @@ static void script_subprocess(js_State *J)
 #endif
 
 //args: number - print
-MUD_WRAPPER(script_gc);
-static void script_gc(js_State *J)
+JS_C_FUNC(script_gc, js_State *J)
 {
     js_gc(J, js_tonumber(J, 1));
     js_pushundefined(J);
