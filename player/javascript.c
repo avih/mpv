@@ -27,8 +27,6 @@
 #include "osdep/io.h"
 #include "osdep/atomics.h"
 
-#include <mujs.h>
-
 #include "talloc.h"
 
 #include "common/common.h"
@@ -49,6 +47,16 @@
 #include "command.h"
 #include "client.h"
 #include "libmpv/client.h"
+
+#if HAVE_DUKTAPE
+  #include "duktape/duktape.h"
+#else
+  #include <mujs.h>
+#endif
+
+#define MUD_USE_DUK HAVE_DUKTAPE
+#include "mud_js.h"
+
 
 #define MAX_LENGTH_COMMANDV 50
 
@@ -140,32 +148,6 @@ static void pushStatus(js_State *J, int err)
 /**********************************************************************
  *  Initialization and files reading/loading/running
  *********************************************************************/
-
-enum FILE_COMMAND {
-    FILE_READ, // pushes the file's content as (null terminated) string
-    FILE_LOAD, // compiles the file to js and pushes it as a js function
-    FILE_RUN   // compiles + runs the file and pushes the result
-};
-
-static void push_file_result(js_State *J, enum FILE_COMMAND command,
-                             const char *filename);
-
-static void script_read_file(js_State *J)
-{
-    push_file_result(J, FILE_READ, js_tostring(J, 1));
-}
-
-static void script_load_file(js_State *J)
-{
-    push_file_result(J, FILE_LOAD, js_tostring(J, 1));
-}
-
-static void script_run_file(js_State *J)
-{
-    push_file_result(J, FILE_RUN, js_tostring(J, 1));
-}
-
-/// file functions helper:
 static const char *get_builtin_file(const char *name)
 {
     for (int n = 0; builtin_files[n][0]; n++)
@@ -174,82 +156,69 @@ static const char *get_builtin_file(const char *name)
     return NULL;
 }
 
-// executes the command and pushes the result or throws an error
-// filename is taken as is, unless it starts with '@', at which case it's read from builtin_files.
-static void push_file_result(js_State *J, enum FILE_COMMAND command,
-                             const char *filename)
+// filename is searched at builtin_files, and if not found then from the OS.
+// pushes the content to the stack or throws an error.
+static void push_file_content(js_State *J, int idx)
 {
-    if (!filename || !filename[0])
-        js_error(J, "invalid file name");
+    if (!js_isstring(J, idx))
+        js_error(J, "filename must be strictly a string");
+    char *s, *filename = (char*)js_tostring(J, idx);
 
-    FILE *f;
-    char *s = NULL;
-    const char *data;
-
-    if (filename[0] == '@') {
-        data = get_builtin_file(filename);
-        if (!data)
-            js_error(J, "cannot find built in file '%s'", filename);
-
-    } else {
-        int n, t;
-
-        f = fopen(filename, "rb");
-        if (!f)
-            js_error(J, "cannot open file: '%s'", filename);
-
-        if (fseek(f, 0, SEEK_END) < 0) {
-            fclose(f);
-            js_error(J, "cannot seek in file: '%s'", filename);
-        }
-        n = ftell(f);
-        fseek(f, 0, SEEK_SET);
-
-        s = talloc_array(NULL, char, n + 1);
-        if (!s) {
-            fclose(f);
-            js_error(J, "cannot allocate storage for file contents: '%s'",
-                     filename);
-        }
-
-        t = fread(s, 1, n, f);
-        if (t != n) {
-            talloc_free(s);
-            fclose(f);
-            js_error(J, "cannot read data from file: '%s'", filename);
-        }
-
-        s[n] = 0;
-        data = s;
+    if (s = (char*)get_builtin_file(filename)) {
+        js_pushstring(J, s);
+        return;
     }
 
-    int err;
-    switch (command) {
-    case FILE_READ:
-        js_pushstring(J, data);
-        err = 0;
-        break;
-    case FILE_LOAD:
-        err = js_ploadstring(J, filename, data);
-        break;
-    case FILE_RUN:
-        if (err = js_ploadstring(J, filename, data))
-            break;
-        js_pushglobal(J);
-        err = js_pcall(J, 0);
-        break;
-    default:
-        js_newerror(J, "unknown file command");
-        err = -1;
-    }
+    FILE *f = fopen(filename, "rb");
+    if (!f)
+        js_error(J, "cannot open file: '%s'", filename);
 
-    if (s) {
-        talloc_free(s);
+    if (fseek(f, 0, SEEK_END) < 0) {
         fclose(f);
+        js_error(J, "cannot seek in file: '%s'", filename);
+    }
+    int n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    s = talloc_array(NULL, char, n);
+    if (!s) {
+        fclose(f);
+        js_error(J, "cannot allocate %d bytes for file: '%s'", n, filename);
     }
 
-    if (err)
-        js_throw(J);
+    int t = fread(s, 1, n, f);
+    fclose(f);
+    if (t != n) {
+        talloc_free(s);
+        js_error(J, "cannot read data from file: '%s'", filename);
+    }
+
+    js_pushlstring(J, s, n);
+    talloc_free(s);
+}
+
+MUD_WRAPPER(script_read_file);
+static void script_read_file(js_State *J)
+{
+    push_file_content(J, 1);
+}
+
+// args: filename, returns the file as a js function
+MUD_WRAPPER(script_load_file);
+static void script_load_file(js_State *J)
+{
+    push_file_content(J, 1);
+    js_loadstring(J, js_tostring(J, 1), js_tostring(J, 2));
+}
+
+// args: filename, runs the content as js at the global scope
+MUD_WRAPPER(script_run_file);
+static void script_run_file(js_State *J)
+{
+    push_file_content(J, 1);
+    js_loadstring(J, js_tostring(J, 1), js_tostring(J, 2));
+    js_pushglobal(J);
+    js_call(J, 0); // and call it.
 }
 
 static void add_functions(struct script_ctx *ctx);
@@ -273,11 +242,11 @@ static void run_file(js_State *J, const char *fname)
 }
 
 // called as script, leaves result on stack or throws
+MUD_WRAPPER(script_run_scripts);
 static void script_run_scripts(js_State *J)
 {
     add_functions(get_ctx(J));
     run_file(J, "@defaults.js");
-    //run_file(J, "player/javascript/defaults.js"); // useful for development to read from the filesystem instead of embedded.
     run_file(J, get_ctx(J)->filename);  // the main file for this script
 
     js_getglobal(J, "mp_event_loop"); // fn
@@ -318,7 +287,13 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     js_newcfunction(J, script_run_scripts, "run_scripts", 0);
     js_pushglobal(J);
     if (js_pcall(J, 0)) {
+#if HAVE_DUKTAPE
+        js_getproperty(J, -1, "stack");
         MP_FATAL(&ctx, "JS error: %s\n", js_tostring(J, -1));
+        js_pop(J, 1);
+#else
+        MP_FATAL(&ctx, "JS error: %s\n", js_tostring(J, -1));
+#endif
         goto error_out;
     }
 
@@ -361,6 +336,7 @@ static void finalize_log(int msgl, js_State *J, int fromIdx)
 // All the log functions are at mp.msg
 
 // args: level as string and the rest are strings to log
+MUD_WRAPPER(script_log);
 static void script_log(js_State *J)
 {
     finalize_log(check_loglevel(J, 1), J, 2);
@@ -368,6 +344,12 @@ static void script_log(js_State *J)
 
 #define LOG_BODY(mlevel) { finalize_log(mlevel, J, 1); }
 // args: strings to log
+MUD_WRAPPER(script_fatal);
+MUD_WRAPPER(script_error);
+MUD_WRAPPER(script_warn);
+MUD_WRAPPER(script_info);
+MUD_WRAPPER(script_verbose);
+MUD_WRAPPER(script_debug);
 static void script_fatal(js_State *J)   LOG_BODY(MSGL_FATAL)
 static void script_error(js_State *J)   LOG_BODY(MSGL_ERR)
 static void script_warn(js_State *J)    LOG_BODY(MSGL_WARN)
@@ -375,6 +357,7 @@ static void script_info(js_State *J)    LOG_BODY(MSGL_INFO)
 static void script_verbose(js_State *J) LOG_BODY(MSGL_V)
 static void script_debug(js_State *J)   LOG_BODY(MSGL_DEBUG)
 
+MUD_WRAPPER(script_find_config_file);
 static void script_find_config_file(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -388,6 +371,7 @@ static void script_find_config_file(js_State *J)
     talloc_free(path);
 }
 
+MUD_WRAPPER(script_suspend);
 static void script_suspend(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -397,6 +381,7 @@ static void script_suspend(js_State *J)
     js_pushundefined(J);
 }
 
+MUD_WRAPPER(script_resume);
 static void script_resume(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -415,6 +400,7 @@ static void resume_all(struct script_ctx *ctx)
     ctx->suspended = 0;
 }
 
+MUD_WRAPPER(script_resume_all);
 static void script_resume_all(js_State *J)
 {
     resume_all(get_ctx(J));
@@ -422,6 +408,7 @@ static void script_resume_all(js_State *J)
 
 static void pushnode(js_State *J, mpv_node *node);
 
+MUD_WRAPPER(script_wait_event);
 static void script_wait_event(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -512,6 +499,7 @@ static void script_wait_event(js_State *J)
     return;
 }
 
+MUD_WRAPPER(script__request_event);
 static void script__request_event(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -530,6 +518,7 @@ static void script__request_event(js_State *J)
 }
 
 // TODO: untested
+MUD_WRAPPER(script_enable_messages);
 static void script_enable_messages(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -539,12 +528,14 @@ static void script_enable_messages(js_State *J)
 }
 
 //args - command [with arguments] as string
+MUD_WRAPPER(script_command);
 static void script_command(js_State *J)
 {
     pushStatus(J, mpv_command_string(client_js(J), js_tostring(J, 1)));
 }
 
 //args: strings of command and then variable number of arguments
+MUD_WRAPPER(script_commandv);
 static void script_commandv(js_State *J)
 {
     const char *args[MAX_LENGTH_COMMANDV + 1];
@@ -562,6 +553,7 @@ static void script_commandv(js_State *J)
 }
 
 //args: name, string value
+MUD_WRAPPER(script_set_property);
 static void script_set_property(js_State *J)
 {
     pushStatus(J, mpv_set_property_string(client_js(J),
@@ -570,6 +562,7 @@ static void script_set_property(js_State *J)
 }
 
 // args: name, boolean
+MUD_WRAPPER(script_set_property_bool);
 static void script_set_property_bool(js_State *J)
 {
     int v = js_toboolean(J, 2);
@@ -585,6 +578,7 @@ static bool is_int(double d)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_number);
 static void script_get_property_number(js_State *J)
 {
     double result;
@@ -604,14 +598,19 @@ static int get_object_properties(void *ta_ctx, char ***keys, js_State *J,
     js_pushiterator(J, idx, 1);
     // the vm probably doesn't allocate the strings for us, so iterating them is cheap
     // and saves reallocs for *keys
-    while (js_nextiterator(J, -1))
+    while (mud_push_next_key(J, -1)) {
         length++;
+        js_pop(J, 1);
+    }
     js_pop(J, 1);
 
     js_pushiterator(J, idx, 1);
     *keys = talloc_array(ta_ctx, char *, length);
-    for (int n = 0; n < length; n++)
-        (*keys)[n] = talloc_strdup(ta_ctx, js_nextiterator(J, -1));
+    for (int n = 0; n < length; n++) {
+        mud_push_next_key(J, -1);
+        (*keys)[n] = talloc_strdup(ta_ctx, js_tostring(J, -1));
+        js_pop(J, 1);
+    }
     js_pop(J, 1); // the iterator
 
     return length;
@@ -674,6 +673,7 @@ static void makenode(void *ta_ctx, mpv_node *dst, js_State *J, int idx)
 }
 
 //args: name, native value
+MUD_WRAPPER(script_set_property_native);
 static void script_set_property_native(js_State *J)
 {
     mpv_node node;
@@ -687,6 +687,7 @@ static void script_set_property_native(js_State *J)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property);
 static void script_get_property(js_State *J)
 {
     char *result = NULL;
@@ -699,6 +700,7 @@ static void script_get_property(js_State *J)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_bool);
 static void script_get_property_bool(js_State *J)
 {
     int result;
@@ -710,6 +712,7 @@ static void script_get_property_bool(js_State *J)
 }
 
 //args: name, number
+MUD_WRAPPER(script_set_property_number);
 static void script_set_property_number(js_State *J)
 {
     double v = js_tonumber(J, 2);
@@ -752,6 +755,7 @@ static void pushnode(js_State *J, mpv_node *node)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_native);
 static void script_get_property_native(js_State *J)
 {
     mpv_node result;
@@ -765,6 +769,7 @@ static void script_get_property_native(js_State *J)
 }
 
 //args: name [,def]
+MUD_WRAPPER(script_get_property_osd);
 static void script_get_property_osd(js_State *J)
 {
     char *result = NULL;
@@ -777,6 +782,7 @@ static void script_get_property_osd(js_State *J)
 }
 
 //args: id, name, type
+MUD_WRAPPER(script__observe_property);
 static void script__observe_property(js_State *J)
 {
     pushStatus(J, mpv_observe_property(client_js(J),
@@ -786,12 +792,14 @@ static void script__observe_property(js_State *J)
 }
 
 //args: id
+MUD_WRAPPER(script__unobserve_property);
 static void script__unobserve_property(js_State *J)
 {
     pushStatus(J, mpv_unobserve_property(client_js(J), js_tonumber(J, 1)));
 }
 
 //args: native (node)
+MUD_WRAPPER(script_command_native);
 static void script_command_native(js_State *J)
 {
     mpv_node cmd;
@@ -806,6 +814,7 @@ static void script_command_native(js_State *J)
 }
 
 // TODO: untested
+MUD_WRAPPER(script_set_osd_ass);
 static void script_set_osd_ass(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -817,6 +826,7 @@ static void script_set_osd_ass(js_State *J)
 }
 
 // args: none, return: object with w and h properties
+MUD_WRAPPER(script_get_osd_resolution);
 static void script_get_osd_resolution(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -830,6 +840,7 @@ static void script_get_osd_resolution(js_State *J)
 }
 
 // args: none, return: object with w, h and aspect properties
+MUD_WRAPPER(script_get_screen_size);
 static void script_get_screen_size(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -846,6 +857,7 @@ static void script_get_screen_size(js_State *J)
 }
 
 // args: none, return: object with x and y properties
+MUD_WRAPPER(script_get_mouse_pos);
 static void script_get_mouse_pos(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -861,18 +873,21 @@ static void script_get_mouse_pos(js_State *J)
 }
 
 //args: none, result in seconds
+MUD_WRAPPER(script_get_time);
 static void script_get_time(js_State *J)
 {
     js_pushnumber(J, mpv_get_time_us(client_js(J)) / (double)(1000 * 1000));
 }
 
 //args: none, result in millisec
+MUD_WRAPPER(script_get_time_ms);
 static void script_get_time_ms(js_State *J)
 {
     js_pushnumber(J, mpv_get_time_us(client_js(J)) / (double)(1000));
 }
 
 // args: section, content [,flags]
+MUD_WRAPPER(script_input_define_section);
 static void script_input_define_section(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -894,6 +909,7 @@ static void script_input_define_section(js_State *J)
 }
 
 // args: section [,flags]
+MUD_WRAPPER(script_input_enable_section);
 static void script_input_enable_section(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -918,6 +934,7 @@ static void script_input_enable_section(js_State *J)
 }
 
 // args: section
+MUD_WRAPPER(script_input_disable_section);
 static void script_input_disable_section(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -926,6 +943,7 @@ static void script_input_disable_section(js_State *J)
 }
 
 // TODO: untested. args: section, x0, y0, x1, y1
+MUD_WRAPPER(script_input_set_section_mouse_area);
 static void script_input_set_section_mouse_area(js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
@@ -941,6 +959,7 @@ static void script_input_set_section_mouse_area(js_State *J)
     mp_input_set_section_mouse_area(mpctx->input, section, x0, y0, x1, y1);
 }
 
+MUD_WRAPPER(script_format_time);
 static void script_format_time(js_State *J)
 {
     double t = js_tonumber(J, 1);
@@ -953,12 +972,14 @@ static void script_format_time(js_State *J)
 }
 
 // TODO: untested
+MUD_WRAPPER(script_get_wakeup_pipe);
 static void script_get_wakeup_pipe(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     js_pushnumber(J, mpv_get_wakeup_pipe(ctx->client));
 }
 
+MUD_WRAPPER(script_getcwd);
 static void script_getcwd(js_State *J)
 {
     char *cwd = mp_getcwd(NULL);
@@ -991,6 +1012,7 @@ static int checkoption(js_State *J, int idx, const char *def,
     js_error(J, "Unknown option");
 }
 
+MUD_WRAPPER(script_readdir);
 static void script_readdir(js_State *J)
 {
     //                    0      1        2       3
@@ -1028,6 +1050,7 @@ static void script_readdir(js_State *J)
     talloc_free(fullpath);
 }
 
+MUD_WRAPPER(script_split_path);
 static void script_split_path(js_State *J)
 {
     const char *p = js_tostring(J, 1);
@@ -1039,6 +1062,7 @@ static void script_split_path(js_State *J)
     js_setindex(J, -2, 1);
 }
 
+MUD_WRAPPER(script_join_path);
 static void script_join_path(js_State *J)
 {
     const char *p1 = js_tostring(J, 1);
@@ -1073,6 +1097,7 @@ static void subprocess_stderr(void *p, char *data, size_t size)
 }
 
 //args: client invocation args object, and a userdata object with talloc context to be used
+MUD_WRAPPER(script_subprocess_exec);
 static void script_subprocess_exec(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
@@ -1138,6 +1163,7 @@ static void script_subprocess_exec(js_State *J)
 
 // since subprocess_exec can fail in several places, we allocate the memory in advance
 // and pcall it, then release the data regardless if succeeded or failed.
+MUD_WRAPPER(script_subprocess);
 static void script_subprocess(js_State *J)
 {
     void *tmp = talloc_new(NULL);
@@ -1159,16 +1185,17 @@ static void script_subprocess(js_State *J)
 #endif
 
 //args: number - print
+MUD_WRAPPER(script_gc);
 static void script_gc(js_State *J)
 {
     js_gc(J, js_tonumber(J, 1));
     js_pushundefined(J);
 }
 
-#define FN_ENTRY(name, length) {#name, script_ ## name, length}
+#define FN_ENTRY(name, length) {#name, MUD_FNAME(script_ ## name), length}
 struct fn_entry {
     const char *name;
-    void (*fn)(js_State *J);
+    mud_ret_t (*fn)(js_State *J);
     int length;
 };
 
@@ -1235,13 +1262,14 @@ static const struct fn_entry msg_fns[] = {
     {0}
 };
 
+
 // adds an object <module> with the functions at e to the current object on stack
 static void register_package_fns(js_State *J, const char *module,
                                  const struct fn_entry *e)
 {
     js_newobject(J);
     for (int n = 0; e[n].name; n++) {
-        js_newcfunction(J, e[n].fn, e[n].name, e[n].length);
+        mud_newcfunction_runtime(J, e[n].fn, e[n].name, e[n].length);
         js_setproperty(J, -2, e[n].name);
     }
     js_setproperty(J, -2, module);
