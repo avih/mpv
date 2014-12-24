@@ -126,11 +126,10 @@ const m_option_t mp_opts[] = {
                CONF_GLOBAL | CONF_NOCFG | CONF_PRE_PARSE),
     OPT_STRINGLIST("reset-on-next-file", reset_options, M_OPT_GLOBAL),
 
-#if HAVE_LUA || HAVE_JAVASCRIPT
+// Lua and Javascript
     OPT_STRINGLIST("script", script_files, CONF_GLOBAL | M_OPT_FILE),
     OPT_KEYVALUELIST("script-opts", script_opts, M_OPT_GLOBAL),
     OPT_FLAG("load-scripts", auto_load_scripts, CONF_GLOBAL),
-#endif
 
 #if HAVE_LUA
     OPT_FLAG("osc", lua_load_osc, CONF_GLOBAL),

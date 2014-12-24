@@ -24,10 +24,9 @@
 #include <dirent.h>
 #include <math.h>
 
-#include "osdep/io.h"
-#include "osdep/atomics.h"
-
 #include <mujs.h>
+
+#include "osdep/io.h"
 
 #include "talloc.h"
 
@@ -69,7 +68,6 @@ struct script_ctx {
     struct mp_log *log;
     struct mpv_handle *client;
     struct MPContext *mpctx;
-    int suspended;
 };
 
 static struct script_ctx *get_ctx(js_State *J)
@@ -143,9 +141,10 @@ static void pushStatus(js_State *J, int err)
 
 static const char *get_builtin_file(const char *name)
 {
-    for (int n = 0; builtin_files[n][0]; n++)
+    for (int n = 0; builtin_files[n][0]; n++) {
         if (!strcmp(builtin_files[n][0], name))
             return builtin_files[n][1];
+    }
     return NULL;
 }
 
@@ -283,8 +282,7 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     r = 0;
 
 error_out:
-    if (ctx.suspended)
-        mpv_resume(ctx.client);
+    mp_resume_all(client);
     if (J)
         js_freestate(J);
     return r;
@@ -308,9 +306,10 @@ static void finalize_log(int msgl, js_State *J, int fromIdx)
 {
     struct script_ctx *ctx = get_ctx(J);
     int last = js_gettop(J) - 1;
-    for (int i = fromIdx; i <= last; i++)
+    for (int i = fromIdx; i <= last; i++) {
         mp_msg(ctx->log, msgl, "%s%s", (i > fromIdx ? " " : ""),
                js_tostring(J, i));
+    }
 
     mp_msg(ctx->log, msgl, "\n");
     pushStatus(J, 1);
@@ -338,62 +337,43 @@ static void script_find_config_file(js_State *J)
     struct MPContext *mpctx = get_mpctx(J);
     const char *s = js_tostring(J, 1);
     char *path = mp_find_config_file(NULL, mpctx->global, s);
-    if (path)
+    if (path) {
         js_pushstring(J, path);
-    else
+    } else {
         js_pushnull(J);
+    }
 
     talloc_free(path);
 }
 
 static void script_suspend(js_State *J)
 {
-    struct script_ctx *ctx = get_ctx(J);
-    if (!ctx->suspended)
-        mpv_suspend(ctx->client);
-    ctx->suspended++;
+    mpv_suspend(client_js(J));
     js_pushundefined(J);
 }
 
 static void script_resume(js_State *J)
 {
-    struct script_ctx *ctx = get_ctx(J);
-    if (ctx->suspended < 1)
-        js_error(J, "trying to resume, but core is not suspended");
-    ctx->suspended--;
-    if (!ctx->suspended)
-        mpv_resume(ctx->client);
+    mpv_resume(client_js(J));
     js_pushundefined(J);
-}
-
-static void resume_all(struct script_ctx *ctx)
-{
-    if (ctx->suspended)
-        mpv_resume(ctx->client);
-    ctx->suspended = 0;
 }
 
 static void script_resume_all(js_State *J)
 {
-    resume_all(get_ctx(J));
+    mp_resume_all(client_js(J));
+    js_pushundefined(J);
 }
 
 static void pushnode(js_State *J, mpv_node *node);
 
+// args: timeout. if undefined or negative, uses 1e20 as an alias for 'forever'
 static void script_wait_event(js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
     int top = js_gettop(J);
-    double timeout = -1;
-    if (!js_isundefined(J, -1))
-        timeout = js_tonumber(J, -1);
+    double timeout = js_isnumber(J, -1) ? js_tonumber(J, -1) : -1;
     if (timeout < 0)
         timeout = 1e20;
-
-    // This will almost surely lead to a deadlock. (Polling is still ok.)
-    if (ctx->suspended && timeout > 0)
-        js_error(J, "attempting to wait while core is suspended");
-
     mpv_event *event = mpv_wait_event(ctx->client, timeout);
 
     js_newobject(J); // reply
@@ -936,15 +916,17 @@ static int checkoption(js_State *J, int idx, const char *def,
     if (js_isstring(J, idx))
         opt = js_tostring(J, idx);
     else {
-        if (def)
+        if (def) {
             opt = def;
-        else
+        } else {
             js_error(J, "Not a string");
+        }
     }
 
-    for (int i = 0; opts[i]; i++)
+    for (int i = 0; opts[i]; i++) {
         if (!strcmp(opt, opts[i]))
             return i;
+    }
 
     js_error(J, "Unknown option");
 }
@@ -978,7 +960,9 @@ static void script_readdir(js_State *J)
                 continue;
             if (!(((t & 1) && S_ISREG(st.st_mode)) ||
                   ((t & 2) && S_ISDIR(st.st_mode))))
+            {
                 continue;
+            }
         }
         js_pushstring(J, name); // list index name
         js_setindex(J, -2, n++);
@@ -1039,7 +1023,7 @@ static void script_subprocess_exec(js_State *J)
 
     void *tmp = js_touserdata(J, 2, "talloc_ctx");
 
-    resume_all(ctx);
+    mp_resume_all(ctx->client);
 
     js_getproperty(J, 1, "args"); // args
     int num_args = js_getlength(J, -1);
@@ -1248,51 +1232,3 @@ const struct mp_scripting mp_scripting_js = {
     .file_ext = "js",
     .load = load_javascript,
 };
-
-////////////// alternative implementations and debug ////////////
-/*
-// printf the node as json
-static void debug_node (mpv_node *node)
-{
-    char *str = talloc_strdup(NULL, "");
-    json_write(&str, node);
-    printf("--node:--\n%s\n", str);
-    talloc_free(str);
-}
-
-// alternative implementation using JSON: push a json string, then use js to parse it into an object
-static void pushnode(js_State *J, mpv_node *node)
-{
-    // convert the node to json
-    char *str = talloc_strdup(NULL, "");
-    json_write(&str, node);
-
-    // then parse it in js
-    js_getglobal(J, "JSON");
-    js_getproperty(J, -1, "parse");
-    js_remove(J, -2); // JSON
-    js_pushglobal(J);
-    js_pushstring(J, str);
-    js_call(J, 1);
-
-    talloc_free(str);
-}
-
-// alternative implementation using json, where we use js to stringify the object on stack
-// and then json_parse locally to create a node of it
-static void makenode(void *ta_ctx, mpv_node *dst, js_State *J, int idx)
-{
-    if (idx < 0) idx += js_gettop(J);
-    js_getglobal(J, "JSON");
-    js_getproperty(J, -1, "stringify");
-    js_remove(J, -2); // JSON
-    js_pushglobal(J);
-    js_copy(J, idx);
-    js_call(J, 1);
-    char *str = talloc_strdup(ta_ctx, js_tostring(J, -1));
-    js_pop(J, 1);
-
-    if (json_parse(ta_ctx, dst, &str, 10) < 0)
-        dst->format = MPV_FORMAT_NONE;
-}
-*/

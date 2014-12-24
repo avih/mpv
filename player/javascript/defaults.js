@@ -9,6 +9,23 @@
 
 /**********************************************************************
  *  CommonJS style module/require
+
+ Spec: http://wiki.commonjs.org/wiki/Modules/1.1.1
+
+ The code tries to follow the spec enough to be useful, but implements
+ somewhere between the spec and the node.js implementation (where require
+ id can map to file paths and as such considered as relative also for a/b
+ style paths where the spec says that a/b should be considered absolute
+ because it doesn't start with . or ..).
+
+ Reasonably implemented:
+ - Require - only the mandatory requirements.
+ - Module Context - everything.
+ - Module Identifiers - so so. internally it normalizes all relative id's
+   to start with . or .., but has relaxed interpretation where a/b style
+   id "path" will be normalized to ./a/b (derived from OS path interpretation).
+   Also, there's no "conceptual module namespcae root" - relative are resolved
+   relative to the script's path and absolute resolve to filesystem paths.
  *********************************************************************/
 mp._modules = {cache: {}, stack: []};
 function new_module(id, uri, _isFirst) {
@@ -479,7 +496,7 @@ mp.add_hook = function add_hook(name, pri, cb) {
 /**********************************************************************
  *  various
  *********************************************************************/
-print = mp.msg.warn; // warn - to have a distinct color
+print = mp.msg.info;
 
 // Currently (2014-12-13) replacer is ignored on mujs' JSON.stringify
 // but will work if the user 'require's another JSON implementation
