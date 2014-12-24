@@ -26,17 +26,23 @@
 - mud_ret_t is defined as duk_ret_t with Duktape, or void with MuJS.
 
 - An error object can be printed as stacktrace at MuJS, but with Duktape
-  it's its 'stack' property. MUD doesn't provide an abstraction.
+  it's its 'stack' property. Use mud_top_error_to_str(J) before printing.
 
 - userdata tags and prototypes are ignored when using Duktape.
 
  *********************************************************************/
 
 #if MUD_USE_DUK
+  #define mud_ret_t duk_ret_t
   // js_newcfunction uses this internally, but may also be useful elsewhere.
   #define MUD_FNAME(fn)  fn ## __mud
 #else
   #define MUD_FNAME(fn)  fn
+  #define mud_ret_t void
+  #define MUD_WRAPPER(fn) /* no-op */
+  #define mud_top_error_to_str(J) /* no-op */
+  #define mud_newcfunction_runtime js_newcfunction
+  // replace js_nextiterator with mud_push_next_key (with Duktape semantics)
 #endif
 
 #if MUD_USE_DUK
@@ -145,14 +151,19 @@ duk:  top==1, args=[arg1]
 // Macro to support empty va_args. the extra arg (0) should be ignored.
 #define _MUD_ERR(fn, J, fmt, ...) fn(J, DUK_ERR_UNCAUGHT_ERROR, fmt, __VA_ARGS__)
 #define js_error(...)    _MUD_ERR(duk_error,             __VA_ARGS__, 0)
+// MuJS doesn't use printf args for js_new*error, so careful with % at the string.
 #define js_newerror(...) _MUD_ERR(duk_push_error_object, __VA_ARGS__, 0)
 
 // userdata - tag and prototype are ignored.
 #define js_newuserdata(J, tag, ptr) { duk_pop(J); duk_push_pointer(J, ptr); }
 #define js_touserdata(J, idx, tag)  duk_require_pointer(J, idx)
 
-#define js_setlength(J, idx, len) { duk_push_number(J, len); \
-                                    duk_put_prop_string(J, -2, "length"); }
+static inline void js_setlength(js_State *J, int idx, unsigned int len)
+{
+    idx = duk_normalize_index(J, idx);
+    duk_push_number(J, len);
+    duk_put_prop_string(J, idx, "length");
+}
 
 static inline void js_setcontext(js_State *J, void *ctx)
 {
@@ -184,7 +195,18 @@ static inline int js_ploadstring(js_State *J, const char *as_filename,
 #define js_pushiterator(J, idx, isOwn) \
                duk_enum(J, idx, isOwn ? DUK_ENUM_OWN_PROPERTIES_ONLY : 0)
 
-#endif /* USE_MUD_JS */
+// If Duktape was compile with stack traces (the default), then it's at the
+// 'stack' property of the error object. With MuJS it's the error object itself.
+#define mud_top_error_to_str(J)           \
+{                                         \
+    duk_get_prop_string(J, -1, "stack");  \
+    if (duk_is_undefined(J, -1))          \
+        duk_pop(J);                       \
+    else                                  \
+        duk_replace(J, -2);               \
+}
+
+#endif /* MUD_USE_DUK */
 
 static int mud_push_next_key(js_State *J, int idx)
 {
@@ -197,12 +219,3 @@ static int mud_push_next_key(js_State *J, int idx)
     return key ? 1 : 0;
 #endif
 }
-
-#if MUD_USE_DUK
-  #define mud_ret_t duk_ret_t
-#else
-  #define mud_ret_t void
-  #define MUD_WRAPPER(fn) /* no-op */
-  #define mud_newcfunction_runtime(J, f, name, nargs) \
-           js_newcfunction        (J, f, name, nargs)
-#endif

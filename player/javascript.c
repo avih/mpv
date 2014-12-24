@@ -286,13 +286,8 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     js_newcfunction(J, script_run_scripts, "run_scripts", 0);
     js_pushglobal(J);
     if (js_pcall(J, 0)) {
-#if HAVE_DUKTAPE
-        js_getproperty(J, -1, "stack");
+        mud_top_error_to_str(J);
         MP_FATAL(&ctx, "JS error: %s\n", js_tostring(J, -1));
-        js_pop(J, 1);
-#else
-        MP_FATAL(&ctx, "JS error: %s\n", js_tostring(J, -1));
-#endif
         goto error_out;
     }
 
