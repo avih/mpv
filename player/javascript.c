@@ -24,6 +24,24 @@
 #include <dirent.h>
 #include <math.h>
 
+// config.h shouldn't typically be included, but we need it for HAVE_DUKTAPE
+#include "config.h"
+
+// For (much) faster development cycles when switching between Duktape and MuJS
+// by always building with both and deciding which is used only at javascript.c
+// (otherwise configure will modify config.h which recompiles most of mpv):
+// 1. Comment at wscript at the MuJS section: #'deps_neg' : [ 'duktape' ],
+// 2. ./waf configure
+// 3. Define MUD_USE_DUK below manually to 1 or 0
+// 4. ./waf build
+// 5. goto 3
+#define MUD_USE_DUK HAVE_DUKTAPE
+#if MUD_USE_DUK
+  #include "player/duktape/duktape.h"
+#else
+  #include <mujs.h>
+#endif
+
 #include "osdep/io.h"
 
 #include "talloc.h"
@@ -47,14 +65,7 @@
 #include "client.h"
 #include "libmpv/client.h"
 
-#if HAVE_DUKTAPE
-  #include "duktape/duktape.h"
-#else
-  #include <mujs.h>
-#endif
-
-#define MUD_USE_DUK HAVE_DUKTAPE
-#include "mud_js.h"
+#include "player/mud_js.h"
 #define JS_C_FUNC MUD_C_FUNC
 
 #define MAX_LENGTH_COMMANDV 50
@@ -197,23 +208,20 @@ static void push_file_content(js_State *J, int idx)
     talloc_free(s);
 }
 
-MUD_WRAPPER(script_read_file);
-static void script_read_file(js_State *J)
+JS_C_FUNC(script_read_file, js_State *J)
 {
     push_file_content(J, 1);
 }
 
 // args: filename, returns the file as a js function
-MUD_WRAPPER(script_load_file);
-static void script_load_file(js_State *J)
+JS_C_FUNC(script_load_file, js_State *J)
 {
     push_file_content(J, 1);
     js_loadstring(J, js_tostring(J, 1), js_tostring(J, 2));
 }
 
 // args: filename, runs the content as js at the global scope
-MUD_WRAPPER(script_run_file);
-static void script_run_file(js_State *J)
+JS_C_FUNC(script_run_file, js_State *J)
 {
     push_file_content(J, 1);
     js_loadstring(J, js_tostring(J, 1), js_tostring(J, 2));
