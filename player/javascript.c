@@ -421,7 +421,6 @@ JS_C_FUNC(script_wait_event, js_State *J)
         mpv_event_client_message *msg = event->data;
 
         js_newarray(J); // event args
-        js_setlength(J, -1, msg->num_args);
         for (int n = 0; n < msg->num_args; n++) {
             js_pushstring(J, msg->args[n]); // event args N val
             js_setindex(J, -2, n);
@@ -544,31 +543,25 @@ JS_C_FUNC(script_get_property_number, js_State *J)
         js_pushnumber(J, result);
 }
 
-// for the object at stack index idx, extract the property names into keys array
-// and return the number of keys.
-static int get_object_properties(void *ta_ctx, char ***keys, js_State *J,
-                                 int idx)
+// for the object at stack index idx, extract the (own) property names into keys
+// array (and allocating it to accommodate) and return the number of keys.
+static int get_object_properties(void *ta_ctx, char ***keys, js_State *J, int idx)
 {
-    idx = idx >= 0 ? idx : js_gettop(J) + idx;
     int length = 0;
     js_pushiterator(J, idx, 1);
-    // the vm probably doesn't allocate the strings for us, so iterating them is cheap
-    // and saves reallocs for *keys
-    while (mud_push_next_key(J, -1)) {
+    int iter_idx = js_gettop(J) - 1; // iter_idx won't change after pushes.
+
+    // Iterators are expensive, and Duktape also forces us to push the key
+    // into the stack, so we might as well make good use of it to iterate only
+    // once and with less LOC. If life gives you lemons...  [not Cave Johnson]
+    while(mud_push_next_key(J, iter_idx))
         length++;
-        js_pop(J, 1);
-    }
-    js_pop(J, 1);
 
-    js_pushiterator(J, idx, 1);
-    *keys = talloc_array(ta_ctx, char *, length);
-    for (int n = 0; n < length; n++) {
-        mud_push_next_key(J, -1);
-        (*keys)[n] = talloc_strdup(ta_ctx, js_tostring(J, -1));
-        js_pop(J, 1);
-    }
-    js_pop(J, 1); // the iterator
+    *keys = talloc_array(ta_ctx, char*, length);
+    for (int n = 0; n < length; n++)
+        (*keys)[n] = talloc_strdup(ta_ctx, js_tostring(J, iter_idx + 1 + n));
 
+    js_pop(J, length + 1); // all the keys and the iterator
     return length;
 }
 
@@ -687,7 +680,6 @@ static void pushnode(js_State *J, mpv_node *node)
         break;
     case MPV_FORMAT_NODE_ARRAY:
         js_newarray(J);
-        js_setlength(J, -1, node->u.list->num);
         for (int n = 0; n < node->u.list->num; n++) {
             pushnode(J, &node->u.list->values[n]);
             js_setindex(J, -2, n);
