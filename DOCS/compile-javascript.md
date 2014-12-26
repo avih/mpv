@@ -8,8 +8,8 @@ Both have minimal dependencies (Duktape needs `libm` and MuJS not even that),
 but neither of them uses pkg-config and both have to be fetched manually.
 
 If both are present then mpv will build both into the same binary, but will
-pick Duktape at runtime by default. To run a script with MuJS, use
-`mpv --script-opts=js-backend=mujs`.
+pick Duktape at runtime by default. To run a script with MuJS when both are
+compiled, use `mpv --js-backend=mujs`.
 
 Duktape - http://duktape.org/
 -----------------------------

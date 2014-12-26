@@ -131,6 +131,9 @@ const m_option_t mp_opts[] = {
     OPT_KEYVALUELIST("script-opts", script_opts, M_OPT_GLOBAL),
     OPT_FLAG("load-scripts", auto_load_scripts, CONF_GLOBAL),
 
+// Javascript only
+    OPT_STRING("js-backend", js_backend, CONF_GLOBAL),
+
 #if HAVE_LUA
     OPT_FLAG("osc", lua_load_osc, CONF_GLOBAL),
     OPT_FLAG("ytdl", lua_load_ytdl, CONF_GLOBAL),
