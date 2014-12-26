@@ -37,7 +37,7 @@
 // 5. goto 3
 #define MUD_USE_DUK HAVE_DUKTAPE
 #if MUD_USE_DUK
-  #include "player/duktape/duktape.h"
+  #include "duktape/duktape.h"
 #else
   #include <mujs.h>
 #endif

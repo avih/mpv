@@ -1,4 +1,4 @@
-#include "../../player/duktape/duktape.h"
+#include "../../duktape/duktape.h"
 
 int main(int argc, char* argv[]) {
     (void)argc; (void)argv;
