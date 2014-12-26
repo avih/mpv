@@ -294,9 +294,8 @@ iconv support use --disable-iconv.",
         'desc' : 'Duktape (JS backend)',
         'func':  check_cc(fragment=load_fragment('duk.c')),
     }, {
-        'name' : 'mujs',
+        'name' : '--mujs',
         'desc' : 'MuJS (JS backend)',
-        'deps_neg' : [ 'duktape' ],
         'func':  check_statement('mujs.h', 'js_setcontext(js_newstate(0, 0), 0)', lib='mujs'),
     }, {
         'name' : '--javascript',

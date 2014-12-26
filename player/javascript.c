@@ -27,15 +27,10 @@
 // config.h shouldn't typically be included, but we need it for HAVE_DUKTAPE
 #include "config.h"
 
-// For (much) faster development cycles when switching between Duktape and MuJS
-// by always building with both and deciding which is used only at javascript.c
-// (otherwise configure will modify config.h which recompiles most of mpv):
-// 1. Comment at wscript at the MuJS section: #'deps_neg' : [ 'duktape' ],
-// 2. ./waf configure
-// 3. Define MUD_USE_DUK below manually to 1 or 0
-// 4. ./waf build
-// 5. goto 3
+#ifndef MUD_USE_DUK
 #define MUD_USE_DUK HAVE_DUKTAPE
+#endif
+
 #if MUD_USE_DUK
     #include "duktape/duktape.h"
 #else
@@ -1171,8 +1166,16 @@ static void add_functions(struct script_ctx *ctx)
     js_pop(J, 1);
 }
 
-const struct mp_scripting mp_scripting_js = {
-    .name = "js script",
-    .file_ext = "js",
+#if MUD_USE_DUK
+const struct mp_scripting mp_scripting_js_duktape = {
+    .name = "js script (duktape)",
+    .file_ext = "js:duktape",
     .load = load_javascript,
 };
+#else
+const struct mp_scripting mp_scripting_js_mujs = {
+    .name = "js script (mujs)",
+    .file_ext = "js:mujs",
+    .load = load_javascript,
+};
+#endif

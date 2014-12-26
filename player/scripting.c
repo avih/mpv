@@ -38,7 +38,8 @@
 
 extern const struct mp_scripting mp_scripting_lua;
 extern const struct mp_scripting mp_scripting_cplugin;
-extern const struct mp_scripting mp_scripting_js;
+extern const struct mp_scripting mp_scripting_js_duktape;
+extern const struct mp_scripting mp_scripting_js_mujs;
 
 static const struct mp_scripting *const scripting_backends[] = {
 #if HAVE_LUA
@@ -47,8 +48,11 @@ static const struct mp_scripting *const scripting_backends[] = {
 #if HAVE_CPLUGINS
     &mp_scripting_cplugin,
 #endif
-#if HAVE_JAVASCRIPT
-    &mp_scripting_js,
+#if HAVE_DUKTAPE
+    &mp_scripting_js_duktape,
+#endif
+#if HAVE_MUJS
+    &mp_scripting_js_mujs,
 #endif
     NULL
 };
@@ -107,13 +111,52 @@ static void wait_loaded(struct MPContext *mpctx)
     mp_wakeup_core(mpctx); // avoid lost wakeups during waiting
 }
 
+// For multiple backends for the same file extension, each should declare its
+// .ext as <ext>:<backend-name> e.g. "js:mujs". Then, by default the first
+// backend which matches the ext will be selected.
+// However, if the user has a script-opts value of <ext>-backend=<name>
+// (e.g. js-backend=mujs), then all backends except for <name> will be rejected.
+static int matching_backend(struct MPContext *mpctx, const char *ext,
+                            const char *backend)
+{
+    bstr b_backend = bstr0(backend),
+         b_ext,
+         b_name;
+
+    if (!bstr_split_tok(b_backend, ":", &b_ext, &b_name))
+        return (strcasecmp(ext, backend) == 0);
+
+    if (bstrcasecmp0(b_ext, ext) != 0)
+        return 0;   // ext mismatch.
+
+    // ext matches the backend. Now make sure that if a specific backend
+    // was requested, then we're it.
+    char *ext_backend_key = talloc_asprintf(NULL, "%s-backend", ext);
+
+    char **sopts = mpctx->opts->script_opts;
+    int found = 1;
+    for (int i = 0; sopts && sopts[i]; i += 2) {
+        char *key = sopts[i],
+             *val = sopts[i + 1];
+        if (strcasecmp(ext_backend_key, key) == 0 &&
+            bstrcasecmp0(b_name, val) != 0)
+        {   // A specific backend was requested - but we're not it.
+            found = 0;
+            break;
+        }
+    }
+
+    talloc_free(ext_backend_key);
+    return found;
+}
+
 int mp_load_script(struct MPContext *mpctx, const char *fname)
 {
     char *ext = mp_splitext(fname, NULL);
     const struct mp_scripting *backend = NULL;
     for (int n = 0; scripting_backends[n]; n++) {
         const struct mp_scripting *b = scripting_backends[n];
-        if (ext && strcasecmp(ext, b->file_ext) == 0) {
+        if (ext && matching_backend(mpctx, ext, b->file_ext)) {
             backend = b;
             break;
         }
