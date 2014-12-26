@@ -321,6 +321,10 @@ const m_option_t mp_opts[] = {
     OPT_FLAG("load-scripts", auto_load_scripts, 0),
 #endif
 
+#if HAVE_JAVASCRIPT
+    OPT_STRING("js-backend", js_backend, 0),
+#endif
+
 // ------------------------- stream options --------------------
 
     OPT_SUBSTRUCT("", stream_cache, stream_cache_conf, 0),

@@ -114,8 +114,8 @@ static void wait_loaded(struct MPContext *mpctx)
 // For multiple backends for the same file extension, each should declare its
 // .ext as <ext>:<backend-name> e.g. "js:mujs". Then, by default the first
 // backend which matches the ext will be selected.
-// However, if the user has a script-opts value of <ext>-backend=<name>
-// (e.g. js-backend=mujs), then all backends except for <name> will be rejected.
+// However, if the user specified --js-backend=<name> then all backends except
+// for <name> will be rejected (even if mpv wasn't built with <name> backend).
 static int matching_backend(struct MPContext *mpctx, const char *ext,
                             const char *backend)
 {
@@ -129,25 +129,19 @@ static int matching_backend(struct MPContext *mpctx, const char *ext,
     if (bstrcasecmp0(b_ext, ext) != 0)
         return 0;   // ext mismatch.
 
-    // ext matches the backend. Now make sure that if a specific backend
-    // was requested, then we're it.
-    char *ext_backend_key = talloc_asprintf(NULL, "%s-backend", ext);
-
-    char **sopts = mpctx->opts->script_opts;
-    int found = 1;
-    for (int i = 0; sopts && sopts[i]; i += 2) {
-        char *key = sopts[i],
-             *val = sopts[i + 1];
-        if (strcasecmp(ext_backend_key, key) == 0 &&
-            bstrcasecmp0(b_name, val) != 0)
-        {   // A specific backend was requested - but we're not it.
-            found = 0;
-            break;
-        }
+    // this only works for js ext. We could also make this more generic
+    // e.g. with --backend=js=mujs, but this will require more code
+    // and more verbose CLI option, which will not be used anyway right now
+    // other than for js ext. So keep it simple.
+    char *opt_jsb = mpctx->opts->js_backend;
+    if (opt_jsb
+        && bstrcasecmp0(b_ext, "js") == 0
+        && bstrcasecmp0(b_name, opt_jsb) != 0)
+    {
+        return 0;  // this backend is not what the user specified.
     }
 
-    talloc_free(ext_backend_key);
-    return found;
+    return 1;
 }
 
 int mp_load_script(struct MPContext *mpctx, const char *fname)
