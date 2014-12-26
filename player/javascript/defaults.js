@@ -11,7 +11,7 @@
 var _Duktape;
 if (typeof Duktape != "undefined") {
   _Duktape = Duktape;
-  // Make this control object invisible to users to keep future compatibility
+  // For compatibility, make invisible to prevent scripts depending on it.
   delete Duktape;
 }
 

@@ -221,5 +221,5 @@ static int mud_push_next_key(js_State *J, int idx)
 }
 
 #define MUD_C_FUNC(fname, state_decleration) \
-  MUD_WRAPPER(fname);                \
+  MUD_WRAPPER(fname);                        \
   static void fname(state_decleration) /* body should follow */
