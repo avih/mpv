@@ -15,8 +15,9 @@ if (typeof Duktape != "undefined") {
   delete Duktape;
 }
 
-mp.utils.js_engine = _Duktape ? "Duktape" : "MuJS";
-mp.msg.verbose("Javascript engine:", mp.utils.js_engine);
+mp.utils._js_backend = _Duktape ? "Duktape" : "MuJS";
+mp.utils.js_backend = function() { return mp.utils._js_backend; };
+mp.msg.verbose("Javascript backend:", mp.utils.js_backend());
 
 mp.utils.get_exception_str = function(e) {
   // With Duktape, e.stack is not enumerable, so dump(e) won't display it.
