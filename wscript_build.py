@@ -220,6 +220,7 @@ def build(ctx):
         ( "player/misc.c" ),
         ( "player/lua.c",                        "lua" ),
         ( "player/javascript.c",                 "javascript" ),
+        ( "player/mujs_shim.c",                  "javascript" ),
         ( "duktape/duktape.c",                   "duktape" ),
         ( "player/osd.c" ),
         ( "player/playloop.c" ),
