@@ -278,7 +278,7 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     };
 
     int r = -1;
-    js_State *J = ctx.jsstate = js_newstate(NULL, NULL);
+    js_State *J = ctx.jsstate = js_newstate(NULL, NULL, 0);
     if (!J)
         goto error_out;
 
@@ -1029,7 +1029,7 @@ JS_C_FUNC(script_subprocess, js_State *J)
     js_copy(J, 0);
     js_copy(J, 1);
     js_pushnull(J);
-    js_newuserdata(J, "talloc_ctx", tmp);
+    js_newuserdata(J, "talloc_ctx", tmp, NULL);
     int err = js_pcall(J, 2);
     talloc_free(tmp);
     if (err)

@@ -50,7 +50,7 @@
  *  1:1 mapping as far as mpv is concerned (and mostly also otherwise)
  *********************************************************************/
 #define js_State          duk_context
-#define js_newstate(a,b)  duk_create_heap_default()
+#define js_newstate(a,b,c) duk_create_heap_default()
 #define js_freestate      duk_destroy_heap
 
 #define js_gettop         duk_get_top
@@ -154,8 +154,8 @@ duk:  top==1, args=[arg1]
 // MuJS doesn't use printf args for js_new*error, so careful with % at the string.
 #define js_newerror(...) _MUD_ERR(duk_push_error_object, __VA_ARGS__, 0)
 
-// userdata - tag and prototype are ignored.
-#define js_newuserdata(J, tag, ptr) { duk_pop(J); duk_push_pointer(J, ptr); }
+// userdata - tag, prototype and finalizer are ignored.
+#define js_newuserdata(J, tag, ptr, fin) { duk_pop(J); duk_push_pointer(J, ptr); }
 #define js_touserdata(J, idx, tag)  duk_require_pointer(J, idx)
 
 static inline void js_setlength(js_State *J, int idx, unsigned int len)

@@ -296,7 +296,7 @@ iconv support use --disable-iconv.",
     }, {
         'name' : '--mujs',
         'desc' : 'MuJS (JS backend)',
-        'func':  check_statement('mujs.h', 'js_setcontext(js_newstate(0, 0), 0)', lib='mujs'),
+        'func':  check_statement('mujs.h', 'js_setcontext(js_newstate(0, 0, 0), 0)', lib='mujs'),
     }, {
         'name' : '--javascript',
         'desc' : 'Javascript',
