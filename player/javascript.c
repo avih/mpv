@@ -170,7 +170,7 @@ static void push_file_content(js_State *J, int idx)
         js_error(J, "filename must be strictly a string");
     char *s, *filename = (char*)js_tostring(J, idx);
 
-    if (s = (char*)get_builtin_file(filename)) {
+    if ((s = (char*)get_builtin_file(filename))) {
         js_pushstring(J, s);
         return;
     }
