@@ -170,8 +170,9 @@ setImmediate = function(fn) {
 }
 
 // timeouts and intervals are clipped to a minimum of 4 ms
+// timeout without duration is treated as if the user requested 0ms
 setTimeout = function(fn, duration) {
-  return addTimer(fn, Math.max(MIN_TIMEOUT_MS, duration));
+  return addTimer(fn, Math.max(MIN_TIMEOUT_MS, (duration || 0)));
 }
 
 setInterval = function(fn, interval) {
