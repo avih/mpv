@@ -1000,7 +1000,7 @@ JS_C_FUNC(script_join_path, js_State *J)
 {
     const char *p1 = js_tostring(J, 1);
     const char *p2 = js_tostring(J, 2);
-    char *r = mp_path_join(NULL, bstr0(p1), bstr0(p2));
+    char *r = mp_path_join(NULL, p1, p2);
     js_pushstring(J, r);
     talloc_free(r);
 }
