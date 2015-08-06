@@ -1060,6 +1060,8 @@ JS_C_FUNC(script_subprocess_exec, js_State *J)
     js_setproperty(J, -2, "stdout"); // res
     js_pushlstring(J, cb_ctx.err.start, cb_ctx.err.len);
     js_setproperty(J, -2, "stderr");
+    js_pushboolean(J, status == MP_SUBPROCESS_EKILLED_BY_US); // res b
+    js_setproperty(J, -2, "killed_by_us"); // res
 }
 
 // since subprocess_exec can fail in several places, we allocate the memory in advance
