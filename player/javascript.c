@@ -767,59 +767,6 @@ JS_C_FUNC(script_get_time_ms, js_State *J)
     js_pushnumber(J, mpv_get_time_us(client_js(J)) / (double)(1000));
 }
 
-// args: section, content [,flags]
-JS_C_FUNC(script_input_define_section, js_State *J)
-{
-    struct MPContext *mpctx = get_mpctx(J);
-    char *section = (char *)js_tostring(J, 1);
-    char *contents = (char *)js_tostring(J, 2);
-    char *flags = (char *)(js_isundefined(J, 3) ? "" : js_tostring(J, 3));
-    bool builtin = true;
-    if (strcmp(flags, "default") == 0) {
-        builtin = true;
-    } else if (strcmp(flags, "force") == 0) {
-        builtin = false;
-    } else if (strcmp(flags, "") == 0) {
-        //pass
-    } else {
-        js_error(J, "invalid flags: '%s'", flags);
-    }
-    mp_input_define_section(mpctx->input, section, "<script>", contents,
-                            builtin);
-}
-
-// args: section [,flags]
-JS_C_FUNC(script_input_enable_section, js_State *J)
-{
-    struct MPContext *mpctx = get_mpctx(J);
-    char *section = (char *)js_tostring(J, 1);
-    char *sflags = (char *)(js_isundefined(J, 2) ? "" : js_tostring(J, 2));
-    bstr bflags = bstr0(sflags);
-    int flags = 0;
-    while (bflags.len) {
-        bstr val;
-        bstr_split_tok(bflags, "|", &val, &bflags);
-        if (bstr_equals0(val, "allow-hide-cursor")) {
-            flags |= MP_INPUT_ALLOW_HIDE_CURSOR;
-        } else if (bstr_equals0(val, "allow-vo-dragging")) {
-            flags |= MP_INPUT_ALLOW_VO_DRAGGING;
-        } else if (bstr_equals0(val, "exclusive")) {
-            flags |= MP_INPUT_EXCLUSIVE;
-        } else {
-            js_error(J, "invalid flag");
-        }
-    }
-    mp_input_enable_section(mpctx->input, section, flags);
-}
-
-// args: section
-JS_C_FUNC(script_input_disable_section, js_State *J)
-{
-    struct MPContext *mpctx = get_mpctx(J);
-    char *section = (char *)js_tostring(J, 1);
-    mp_input_disable_section(mpctx->input, section);
-}
-
 /*   Untested or very little tested, on lua used mostly for OSC */
 // TODO: untested
 JS_C_FUNC(script_set_osd_ass, js_State *J)
@@ -1153,9 +1100,6 @@ static const struct fn_entry main_fns[] = {
     FN_ENTRY(_unobserve_property, 1),
     FN_ENTRY(get_time, 0),
     FN_ENTRY(get_time_ms, 0),
-    FN_ENTRY(input_define_section, 3),
-    FN_ENTRY(input_enable_section, 2),
-    FN_ENTRY(input_disable_section, 1),
     FN_ENTRY(format_time, 2),
     FN_ENTRY(enable_messages, 1),
     FN_ENTRY(get_wakeup_pipe, 0),

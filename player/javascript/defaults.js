@@ -356,6 +356,25 @@ function notifyObserver(e) {
   }
 }
 
+/**********************************************************************
+ *  Input sections
+ *********************************************************************/
+
+mp.input_define_section = function(section, contents, flags) {
+  if (!flags)
+    flags = "default";
+  mp.commandv("define-section", section, contents, flags);
+}
+
+mp.input_enable_section = function(section, flags) {
+  if (!flags)
+    flags = "";
+  mp.commandv("enable-section", section, flags);
+}
+
+mp.input_disable_section = function(section) {
+  mp.commandv("disable-section", section);
+}
 
 /**********************************************************************
  *  Key bindings and client messages
@@ -412,7 +431,7 @@ function update_key_bindings() {
     }
     mp.input_define_section(section, cfg, flags);
     // TODO: remove the section if the script is stopped
-    mp.input_enable_section(section, "allow-hide-cursor|allow-vo-dragging");
+    mp.input_enable_section(section, "allow-hide-cursor+allow-vo-dragging");
   }
 }
 
