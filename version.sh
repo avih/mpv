@@ -44,7 +44,11 @@ fi
 
 test "$version" || version=UNKNOWN
 
-VERSION="${version}${extra}"
+# add the first rev (from mpv master) before the JS commits
+master_revision="$(git log -n 100 --pretty=oneline | sed -e '1,/add javascript scripting support using MuJS/d' 2>/dev/null | head -c 7)"
+master=" (master-${master_revision} +JS)"
+
+VERSION="${version}${master}${extra}"
 
 if test "$print" = yes ; then
     echo "$VERSION"
