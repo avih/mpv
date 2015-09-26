@@ -30,11 +30,18 @@ if test "$cwd" ; then
   cd "$cwd"
 fi
 
+# the first rev (from mpv master) before the rebased patches
+mpv_master="$(git log -n 100 --format='%h %s' | \
+             awk 'f{print $1;f=0;} /experiments-avih-baseline/{f=1}' | \
+             tail -1)"
+avih_head="$(git rev-parse --short HEAD)"
+avih_extra_count="$(git rev-list --count $mpv_master..HEAD)"
+
 # Extract revision number from file used by daily tarball snapshots
 # or from "git describe" output
 git_revision=$(cat snapshot_version 2> /dev/null)
-test "$git_revision" || test ! -e .git || git_revision="$(git describe \
-    --match "v[0-9]*" --always --tags --dirty | sed 's/^v//')"
+test "$git_revision" || test ! -e .git || git_revision="$(git describe $mpv_master \
+    --match "v[0-9]*" --always --tags | sed 's/^v//')"
 version="$git_revision"
 
 # other tarballs extract the version number from the VERSION file
@@ -44,7 +51,9 @@ fi
 
 test "$version" || version=UNKNOWN
 
-VERSION="${version}${extra}"
+avih=" +$avih_extra_count@avih=$avih_head"
+
+VERSION="${version}${avih}${extra}"
 
 if test "$print" = yes ; then
     echo "$VERSION"
