@@ -224,6 +224,24 @@ JS_C_FUNC(script_run_file, js_State *J)
     js_call(J, 0); // and call it.
 }
 
+// args: file name, data (str)
+JS_C_FUNC(script_write_file, js_State *J)
+{
+    const char *fname = js_tostring(J, 1);
+    const char *data = js_tostring(J, 2);
+    if (strstr(fname, "file:") != fname)
+        js_error(J, "file name for write_file must start with 'file:'");
+    fname += strlen("file:");
+    FILE *f = fopen(fname, "wb");
+    if (!f)
+        js_error(J, "cannot open file for writing: '%s'", fname);
+    int len = strlen(data);
+    int wrote = fwrite(data, 1, strlen(data), f);
+    fclose(f);
+    if (len != wrote)
+        js_error(J, "cannot write %d bytes to file: '%s' (wrote %d)", len, fname, wrote);
+}
+
 static void add_functions(struct script_ctx *ctx);
 
 // called directly, doesn't modify stack's depth, runs the file or throws an error
@@ -1145,6 +1163,7 @@ static const struct fn_entry utils_fns[] = {
     FN_ENTRY(read_file, 1),
     FN_ENTRY(load_file, 1),
     FN_ENTRY(run_file, 1),
+    FN_ENTRY(write_file, 2),
     FN_ENTRY(gc, 1),
     {0}
 };
