@@ -819,21 +819,8 @@ JS_C_FUNC(script_set_osd_ass, js_State *J)
     mp_input_wakeup(mpctx->input);
 }
 
-// args: none, return: object with w and h properties
-JS_C_FUNC(script_get_osd_resolution, js_State *J)
-{
-    struct MPContext *mpctx = get_mpctx(J);
-    int w, h;
-    osd_object_get_resolution(mpctx->osd, OSDTYPE_EXTERNAL, &w, &h);
-    js_newobject(J);
-    js_pushnumber(J, w);
-    js_setproperty(J, -2, "w");
-    js_pushnumber(J, h);
-    js_setproperty(J, -2, "h");
-}
-
 // args: none, return: object with w, h and aspect properties
-JS_C_FUNC(script_get_screen_size, js_State *J)
+JS_C_FUNC(script_get_osd_size, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
     struct mp_osd_res vo_res = osd_get_vo_res(mpctx->osd, OSDTYPE_EXTERNAL);
@@ -848,18 +835,32 @@ JS_C_FUNC(script_get_screen_size, js_State *J)
     js_setproperty(J, -2, "aspect");
 }
 
+// args: none, return: object with properties t/b/l/r (top/bottom/left/right)
+JS_C_FUNC(script_get_osd_margins, js_State *J)
+{
+    struct MPContext *mpctx = get_mpctx(J);
+    struct mp_osd_res vo_res = osd_get_vo_res(mpctx->osd, OSDTYPE_EXTERNAL);
+    js_newobject(J);
+    js_pushnumber(J, vo_res.ml);
+    js_setproperty(J, -2, "l");
+    js_pushnumber(J, vo_res.mt);
+    js_setproperty(J, -2, "t");
+    js_pushnumber(J, vo_res.mr);
+    js_setproperty(J, -2, "r");
+    js_pushnumber(J, vo_res.mb);
+    js_setproperty(J, -2, "b");
+}
+
 // args: none, return: object with x and y properties
 JS_C_FUNC(script_get_mouse_pos, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
     int px, py;
     mp_input_get_mouse_pos(mpctx->input, &px, &py);
-    double sw, sh;
-    osd_object_get_scale_factor(mpctx->osd, OSDTYPE_EXTERNAL, &sw, &sh);
     js_newobject(J);
-    js_pushnumber(J, px * sw);
+    js_pushnumber(J, px);
     js_setproperty(J, -2, "x");
-    js_pushnumber(J, py * sh);
+    js_pushnumber(J, py);
     js_setproperty(J, -2, "y");
 }
 
@@ -868,14 +869,11 @@ JS_C_FUNC(script_input_set_section_mouse_area, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
 
-    double sw, sh;
-    osd_object_get_scale_factor(mpctx->osd, OSDTYPE_EXTERNAL, &sw, &sh);
-
     char *section = (char *)js_tostring(J, 1);
-    int x0 = sw ? js_tonumber(J, 2) / sw : 0;
-    int y0 = sh ? js_tonumber(J, 3) / sh : 0;
-    int x1 = sw ? js_tonumber(J, 4) / sw : 0;
-    int y1 = sh ? js_tonumber(J, 5) / sh : 0;
+    int x0 = js_tonumber(J, 2);
+    int y0 = js_tonumber(J, 3);
+    int x1 = js_tonumber(J, 4);
+    int y1 = js_tonumber(J, 5);
     mp_input_set_section_mouse_area(mpctx->input, section, x0, y0, x1, y1);
 }
 /*   End of untested section */
@@ -1146,8 +1144,8 @@ static const struct fn_entry main_fns[] = {
     FN_ENTRY(enable_messages, 1),
     FN_ENTRY(get_wakeup_pipe, 0),
     FN_ENTRY(set_osd_ass, 3),
-    FN_ENTRY(get_osd_resolution, 0),
-    FN_ENTRY(get_screen_size, 0),
+    FN_ENTRY(get_osd_size, 0),
+    FN_ENTRY(get_osd_margins, 0),
     FN_ENTRY(get_mouse_pos, 0),
     FN_ENTRY(input_set_section_mouse_area, 5),
     {0}
