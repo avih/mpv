@@ -315,6 +315,7 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     r = 0;
 
 error_out:
+    osd_set_external(ctx.mpctx->osd, client, 0, 0, NULL); // remove overlay
     mp_resume_all(client);
     if (J)
         js_freestate(J);
@@ -811,19 +812,19 @@ JS_C_FUNC(script_get_time_ms, js_State *J)
 // TODO: untested
 JS_C_FUNC(script_set_osd_ass, js_State *J)
 {
-    struct MPContext *mpctx = get_mpctx(J);
+    struct script_ctx *ctx = get_ctx(J);
     int res_x = js_tonumber(J, 1);
     int res_y = js_tonumber(J, 2);
     const char *text = js_tostring(J, 3);
-    osd_set_external(mpctx->osd, res_x, res_y, (char *)text);
-    mp_input_wakeup(mpctx->input);
+    osd_set_external(ctx->mpctx->osd, ctx->client, res_x, res_y, (char *)text);
+    mp_input_wakeup(ctx->mpctx->input);
 }
 
 // args: none, return: object with w, h and aspect properties
 JS_C_FUNC(script_get_osd_size, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
-    struct mp_osd_res vo_res = osd_get_vo_res(mpctx->osd, OSDTYPE_EXTERNAL);
+    struct mp_osd_res vo_res = osd_get_vo_res(mpctx->osd);
     double aspect = 1.0 * vo_res.w / MPMAX(vo_res.h, 1) /
                     (vo_res.display_par ? vo_res.display_par : 1);
     js_newobject(J);
@@ -839,7 +840,7 @@ JS_C_FUNC(script_get_osd_size, js_State *J)
 JS_C_FUNC(script_get_osd_margins, js_State *J)
 {
     struct MPContext *mpctx = get_mpctx(J);
-    struct mp_osd_res vo_res = osd_get_vo_res(mpctx->osd, OSDTYPE_EXTERNAL);
+    struct mp_osd_res vo_res = osd_get_vo_res(mpctx->osd);
     js_newobject(J);
     js_pushnumber(J, vo_res.ml);
     js_setproperty(J, -2, "l");
