@@ -426,7 +426,7 @@ function update_key_bindings() {
     var cfg = "";
     for (var name in key_bindings) {
       var attrs = key_bindings[name];
-      if (attrs.forced != def)
+      if (attrs.bind && attrs.forced != def)
         cfg = cfg + attrs.bind + "\n";
     }
     mp.input_define_section(section, cfg, flags);
@@ -446,7 +446,6 @@ function add_binding(attrs, key, name, fn, rp) {
   }
 
   rp = rp || "";
-  var bind = key;
   var repeatable = rp == "repeatable" || rp["repeatable"];
   if (rp["forced"])
     attrs.forced = true;
@@ -486,7 +485,8 @@ function add_binding(attrs, key, name, fn, rp) {
     msg_cb = fn;
   }
 
-  attrs.bind = bind + " script_binding " + mp.script_name + "/" + name;
+  if (key)
+    attrs.bind = key + " script_binding " + mp.script_name + "/" + name;
   attrs.name = name;
   key_bindings[name] = attrs;
   update_key_bindings();
