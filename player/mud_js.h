@@ -149,7 +149,7 @@ duk:  top==1, args=[arg1]
   }
 
 // Macro to support empty va_args. the extra arg (0) should be ignored.
-#define _MUD_ERR(fn, J, fmt, ...) fn(J, DUK_ERR_UNCAUGHT_ERROR, fmt, __VA_ARGS__)
+#define _MUD_ERR(fn, J, fmt, ...) fn(J, DUK_ERR_ERROR, fmt, __VA_ARGS__)
 #define js_error(...)    _MUD_ERR(duk_error,             __VA_ARGS__, 0)
 // MuJS doesn't use printf args for js_new*error, so careful with % at the string.
 #define js_newerror(...) _MUD_ERR(duk_push_error_object, __VA_ARGS__, 0)
