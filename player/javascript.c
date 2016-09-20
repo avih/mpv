@@ -315,7 +315,6 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     r = 0;
 
 error_out:
-    osd_set_external(ctx.mpctx->osd, client, 0, 0, NULL); // remove overlay
     mp_resume_all(client);
     if (J)
         js_freestate(J);
@@ -382,6 +381,9 @@ JS_C_FUNC(script_find_config_file, js_State *J)
 
 JS_C_FUNC(script_suspend, js_State *J)
 {
+    struct script_ctx *ctx = get_ctx(J);
+    MP_WARN(ctx, "mp.suspend() (possibly triggered by mp.use_suspend) is "
+                 "deprecated.\n");
     mpv_suspend(client_js(J));
     js_pushundefined(J);
 }
@@ -817,7 +819,7 @@ JS_C_FUNC(script_set_osd_ass, js_State *J)
     int res_y = js_tonumber(J, 2);
     const char *text = js_tostring(J, 3);
     osd_set_external(ctx->mpctx->osd, ctx->client, res_x, res_y, (char *)text);
-    mp_input_wakeup(ctx->mpctx->input);
+    mp_wakeup_core(ctx->mpctx);
 }
 
 // args: none, return: object with w, h and aspect properties
