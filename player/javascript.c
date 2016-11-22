@@ -993,7 +993,6 @@ JS_C_FUNC(script_join_path, js_State *J)
     talloc_free(r);
 }
 
-#if HAVE_POSIX_SPAWN || defined(__MINGW32__)
 struct subprocess_cb_ctx {
     struct mp_log *log;
     void *talloc_ctx;
@@ -1083,8 +1082,45 @@ JS_C_FUNC(script_subprocess_exec, js_State *J)
     js_setproperty(J, -2, "killed_by_us"); // res
 }
 
-// since subprocess_exec can fail in several places, we allocate the memory in advance
-// and pcall it, then release the data regardless if succeeded or failed.
+//args: client invocation args object, and a userdata object with talloc context to be used
+JS_C_FUNC(script_subprocess_detached_exec, js_State *J)
+{
+    struct script_ctx *ctx = get_ctx(J);
+    if (!js_isobject(J, 1))
+        js_error(J, "argument must be an object");
+
+    void *tmp = js_touserdata(J, 2, "talloc_ctx");
+
+    mp_resume_all(ctx->client);
+
+    js_getproperty(J, 1, "args"); // args
+    int num_args = js_getlength(J, -1);
+    if (!num_args) // not using js_isarray to also accept array-like objects
+        js_error(J, "args must be an non-empty array");
+    char *args[256];
+    if (num_args > MP_ARRAY_SIZE(args) - 1) // last needs to be NULL
+        js_error(J, "too many arguments");
+    if (num_args < 1)
+        js_error(J, "program name missing");
+
+    for (int n = 0; n < num_args; n++) {
+        js_getindex(J, -1, n);
+        if (js_isundefined(J, -1))
+            js_error(J, "program arguments must be strings");
+        args[n] = talloc_strdup(tmp, js_tostring(J, -1));
+        js_pop(J, 1); // args
+    }
+    args[num_args] = NULL;
+    js_pop(J, 1); // -
+
+    mp_subprocess_detached(ctx->log, args);
+}
+
+// since subprocess[_detatched]_exec can fail in several places, create the talloc
+// ctx in dvance and pcall it, then release the data regardless if succeeded or failed.
+// Both functions accepts a client invocation args object, and forward it
+// together with a newly created talloc context as an additional arg.
+
 JS_C_FUNC(script_subprocess, js_State *J)
 {
     void *tmp = talloc_new(NULL);
@@ -1098,12 +1134,20 @@ JS_C_FUNC(script_subprocess, js_State *J)
     if (err)
         js_throw(J);
 }
-#else
-static void script_subprocess(js_State *J)
+
+JS_C_FUNC(script_subprocess_detached, js_State *J)
 {
-    js_error("unimplemented");
+    void *tmp = talloc_new(NULL);
+    js_newcfunction(J, script_subprocess_detached_exec, "subprocess_exec", 2);
+    js_copy(J, 0);
+    js_copy(J, 1);
+    js_pushnull(J);
+    js_newuserdata(J, "talloc_ctx", tmp, NULL);
+    int err = js_pcall(J, 2);
+    talloc_free(tmp);
+    if (err)
+        js_throw(J);
 }
-#endif
 
 //args: number - print
 JS_C_FUNC(script_gc, js_State *J)
@@ -1160,6 +1204,7 @@ static const struct fn_entry utils_fns[] = {
     FN_ENTRY(split_path, 1),
     FN_ENTRY(join_path, 2),
     FN_ENTRY(subprocess, 1),
+    FN_ENTRY(subprocess_detached, 1),
 
     FN_ENTRY(read_file, 1),
     FN_ENTRY(load_file, 1),
