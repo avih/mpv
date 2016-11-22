@@ -315,7 +315,6 @@ static int load_javascript(struct mpv_handle *client, const char *fname)
     r = 0;
 
 error_out:
-    mp_resume_all(client);
     if (J)
         js_freestate(J);
     return r;
@@ -382,21 +381,17 @@ JS_C_FUNC(script_find_config_file, js_State *J)
 JS_C_FUNC(script_suspend, js_State *J)
 {
     struct script_ctx *ctx = get_ctx(J);
-    MP_WARN(ctx, "mp.suspend() (possibly triggered by mp.use_suspend) is "
-                 "deprecated.\n");
-    mpv_suspend(client_js(J));
+    MP_ERR(ctx, "mp.suspend() is deprecated and does nothing.\n");
     js_pushundefined(J);
 }
 
 JS_C_FUNC(script_resume, js_State *J)
 {
-    mpv_resume(client_js(J));
     js_pushundefined(J);
 }
 
 JS_C_FUNC(script_resume_all, js_State *J)
 {
-    mp_resume_all(client_js(J));
     js_pushundefined(J);
 }
 
@@ -1025,8 +1020,6 @@ JS_C_FUNC(script_subprocess_exec, js_State *J)
 
     void *tmp = js_touserdata(J, 2, "talloc_ctx");
 
-    mp_resume_all(ctx->client);
-
     js_getproperty(J, 1, "args"); // args
     int num_args = js_getlength(J, -1);
     if (!num_args) // not using js_isarray to also accept array-like objects
@@ -1090,8 +1083,6 @@ JS_C_FUNC(script_subprocess_detached_exec, js_State *J)
         js_error(J, "argument must be an object");
 
     void *tmp = js_touserdata(J, 2, "talloc_ctx");
-
-    mp_resume_all(ctx->client);
 
     js_getproperty(J, 1, "args"); // args
     int num_args = js_getlength(J, -1);
