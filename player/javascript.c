@@ -779,7 +779,7 @@ JS_C_FUNC(script__unobserve_property, js_State *J)
     pushStatus(J, mpv_unobserve_property(client_js(J), js_tonumber(J, 1)));
 }
 
-//args: native (node)
+//args: native (one array of command and args, similar to commandv) [,def]
 JS_C_FUNC(script_command_native, js_State *J)
 {
     mpv_node cmd;
@@ -787,7 +787,7 @@ JS_C_FUNC(script_command_native, js_State *J)
     void *tmp = talloc_new(NULL);
     makenode(tmp, &cmd, J, 1);
     if (!handledAsErrDef(J, mpv_command_node(client_js(J), &cmd, &result))) {
-        pushnode(tmp, &result);
+        pushnode(J, &result);
         mpv_free_node_contents(&result);
     }
     talloc_free(tmp);
@@ -1164,7 +1164,7 @@ static const struct fn_entry main_fns[] = {
     FN_ENTRY(find_config_file, 1),
     FN_ENTRY(command, 1),
     FN_ENTRY(commandv, 1),
-    FN_ENTRY(command_native, 1),
+    FN_ENTRY(command_native, 2),
     FN_ENTRY(get_property_bool, 2),
     FN_ENTRY(get_property_number, 2),
     FN_ENTRY(get_property_native, 2),
