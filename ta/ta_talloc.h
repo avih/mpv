@@ -98,6 +98,10 @@ char *ta_talloc_asprintf_append_buffer(char *s, const char *fmt, ...) TA_PRF(2, 
             MP_RESIZE_ARRAY(ctx, p, ta_calc_prealloc_elems(nextidx_)); \
     } while (0)
 
+// The following macros respect the data position indicated by idxvar, without
+// assuming its value is related to the actual allocated size, therefore it's
+// valid to modify idxvar between macros invocations.
+
 // Append the last argument to array p (with count idxvar), basically:
 // p[idxvar++] = ...; ctx as ta parent.
 #define MP_TARRAY_APPEND(ctx, p, idxvar, ...)       \

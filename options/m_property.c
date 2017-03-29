@@ -285,8 +285,9 @@ static int expand_property(const struct m_property *prop_list, char **ret,
     return skip;
 }
 
-char *m_properties_expand_string(const struct m_property *prop_list,
-                                 const char *str0, void *ctx)
+// Internal implementation of m_properties_expand_string, with recursion limit.
+static char *expand_int(const struct m_property *prop_list,
+                        const char *str0, void *ctx, int limit)
 {
     char *ret = NULL;
     int ret_len = 0;
@@ -294,14 +295,41 @@ char *m_properties_expand_string(const struct m_property *prop_list,
     int level = 0, skip_level = 0;
     bstr str = bstr0(str0);
 
+    // For each new level, if it starts with '+' (needs to be re-expanded once
+    // completed), store the output size before starting the level, else -1.
+    // E.g. for the string "${X}${+Y:abc${Z}}", the stack will be [-1] while
+    // expanding X, [N] while expanding Y, and [N, -1] while (if) expanding Z,
+    // where N is the output size after expanding ${X}.
+    int *rex_stack = NULL;
+    int rex_len = 0;
+
     while (str.len) {
         if (level > 0 && bstr_eatstart0(&str, "}")) {
             if (skip && level <= skip_level)
                 skip = false;
             level--;
+
+            int from = rex_stack[--rex_len];  // pop.
+            if (from >= 0) {
+                // re-expand the level's output "inplace". Effectively:
+                // ret = ret[0 .. from] + expand( ret[from .. ret_len] )
+                if (limit <= 0) {
+                    append_str(&ret, &ret_len, bstr0("(error-limit)"));
+                    break;
+                }
+                MP_TARRAY_APPEND(NULL, ret, ret_len, '\0');
+                char *out0 = expand_int(prop_list, ret + from, ctx, limit - 1);
+                ret_len = from;
+                append_str(&ret, &ret_len, bstr0(out0));
+                talloc_free(out0);
+            }
         } else if (bstr_startswith0(str, "${") && bstr_find0(str, "}") >= 0) {
             str = bstr_cut(str, 2);
             level++;
+
+            // Level start at the output for re-expand, or -1 if no need.
+            int from = bstr_eatstart0(&str, "+") ? ret_len : -1;
+            MP_TARRAY_APPEND(NULL, rex_stack, rex_len, from);  // push
 
             // Assume ":" and "}" can't be part of the property name
             // => if ":" comes before "}", it must be for the fallback
@@ -338,7 +366,15 @@ char *m_properties_expand_string(const struct m_property *prop_list,
     }
 
     MP_TARRAY_APPEND(NULL, ret, ret_len, '\0');
+    talloc_free(rex_stack);
     return ret;
+}
+
+char *m_properties_expand_string(const struct m_property *prop_list,
+                                 const char *str0, void *ctx)
+{
+    // Recursion limit set to 10 arbitrarily, but likely infinite if reached.
+    return expand_int(prop_list, str0, ctx, 10);
 }
 
 void m_properties_print_help_list(struct mp_log *log,
