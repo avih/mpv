@@ -2255,6 +2255,16 @@ The following expansions are supported:
 ``${!NAME==VALUE:STR}``
     Same as with the ``?`` variant, but ``STR`` is expanded if the value is
     not equal. (Using the same semantics as with ``?``.)
+``${+...}``
+    Same as any valid ``${...}`` (without ``+``), then expand the result again.
+    Useful for reusing existing templates in multiple plcaes. E.g. without it -
+    it's impossible to reuse the ``title`` property within ``term-status-msg``
+    because setting it to ``${title}`` will expand to a template (e.g. maybe to
+    ``"${media-title}"``), however, by using ``${+title}`` it will be expanded
+    again to the actual value of ``media-title``, i.e. end up displaying the
+    same string as displayed at the window title.
+
+    Note: the ``+`` syntax is experimental and might be removed in the future.
 ``$$``
     Expands to ``$``.
 ``$}``
