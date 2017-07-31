@@ -156,6 +156,18 @@ Available audio output drivers are:
         Allow mpv to use PulseAudio even if the sink is suspended (default: no).
         Can be useful if PulseAudio is running as a bridge to jack and mpv has its sink-input set to the one jack is using.
 
+``dsound`` (Windows only)
+    DirectX DirectSound audio output driver
+
+    .. note:: This driver is for compatibility with old systems.
+
+    ``device=<devicenum>``
+        Sets the device number to use. Playing a file with ``-v`` will show a
+        list of available devices.
+
+    ``buffersize=<ms>``
+        DirectSound buffer size in milliseconds (default: 200).
+
 ``sdl``
     SDL 1.2+ audio output driver. Should work on any platform supported by SDL
     1.2, but may require the ``SDL_AUDIODRIVER`` environment variable to be set

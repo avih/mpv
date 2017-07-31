@@ -494,6 +494,10 @@ audio_output_features = [
             fragment=load_fragment('audiounit.c'),
             framework_name=['Foundation', 'AudioToolbox'])
     }, {
+        'name': '--dsound',
+        'desc': 'DirectSound audio output',
+        'func': check_cc(header_name='dsound.h'),
+    }, {
         'name': '--wasapi',
         'desc': 'WASAPI audio output',
         'deps': 'os-win32 || os-cygwin',
