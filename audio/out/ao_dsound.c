@@ -451,7 +451,6 @@ static int init(struct ao *ao)
             return -1;
     }
     switch (format) {
-    case AF_FORMAT_S24:
     case AF_FORMAT_S16:
     case AF_FORMAT_U8:
         break;
@@ -521,6 +520,7 @@ static int init(struct ao *ao)
     p->write_offset = 0;
     p->min_free_space = wformat.Format.nBlockAlign;
     p->outburst = wformat.Format.nBlockAlign * 512;
+    ao->period_size = p->outburst / wformat.Format.nBlockAlign;
 
     // create primary buffer and set its format
 
