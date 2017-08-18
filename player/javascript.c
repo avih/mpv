@@ -317,6 +317,14 @@ static const char *get_builtin_file(const char *name)
 // Push up to limit bytes of file fname: from builtin_files, else from the OS.
 static void af_push_file(js_State *J, const char *fname, int limit, void *af)
 {
+    // For fname "memory://..." to work as a js script, scripting.c needs it to
+    // look (very vaguely) like a filename ending with ".js" extension.
+    // E.g. --script='memory:// print("Hello, world!") //memfile.js'
+    if (strstr(fname, "memory://") == fname) {
+        js_pushstring(J, fname + strlen("memory://"));
+        return;
+    }
+
     char *filename = mp_get_user_path(af, jctx(J)->mpctx->global, fname);
     MP_VERBOSE(jctx(J), "Reading file '%s'\n", filename);
     if (limit < 0)
