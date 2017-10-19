@@ -867,6 +867,13 @@ test_lua "lua >= 5.2.0"
 
 test "$_lua" != yes && check_yes_no no LUA
 
+if $_pkg_config 'mujs >= 1.0'; then
+    check_yes_no yes JAVASCRIPT
+    extra_ldflags="$extra_ldflags -lmujs"
+else
+    check_yes_no no  JAVASCRIPT
+fi
+
 if ! ( $_pkg_config 'vapoursynth >= 24' ) ; then
     _vapoursynth=no
     _vapoursynth_lazy=no
@@ -1021,7 +1028,7 @@ cat > $TMPC << EOF
 #define HAVE_AVUTIL_CONTENT_LIGHT_LEVEL 0
 #define HAVE_WIN32_DESKTOP 0
 #define HAVE_UWP 0
-#define HAVE_JAVASCRIPT 0
+#define HAVE_JAVASCRIPT 1
 #define HAVE_WIN32_PIPES 0
 #define HAVE_WIN32_INTERNAL_PTHREADS 0
 #define HAVE_GL_DXINTEROP_D3D9 0
