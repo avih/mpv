@@ -1,0 +1,136 @@
+From 8a6613dcc465457890be3dc2e1b067a4defa3981 Mon Sep 17 00:00:00 2001
+From: "Avi Halachmi (:avih)" <avihpit@yahoo.com>
+Date: Thu, 19 Oct 2017 17:16:00 +0300
+Subject: [PATCH] compilers: add tinyc (tcc) support
+
+Tested only on linux.
+---
+ waflib/Tools/c_config.py   |  9 +++++++--
+ waflib/Tools/compiler_c.py |  2 +-
+ waflib/Tools/gcc.py        |  9 +++++++++
+ waflib/Tools/tcc.py        | 45 +++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 62 insertions(+), 3 deletions(-)
+ create mode 100644 waflib/Tools/tcc.py
+
+diff --git a/waflib/Tools/c_config.py b/waflib/Tools/c_config.py
+index a8731b70..fe7ccfda 100644
+--- a/waflib/Tools/c_config.py
++++ b/waflib/Tools/c_config.py
+@@ -1000,7 +1000,7 @@ def cxx_load_tools(conf):
+ 	conf.load('cxx')
+ 
+ @conf
+-def get_cc_version(conf, cc, gcc=False, icc=False, clang=False):
++def get_cc_version(conf, cc, gcc=False, icc=False, clang=False, tcc=False):
+ 	"""
+ 	Runs the preprocessor to determine the gcc/icc/clang version
+ 
+@@ -1029,8 +1029,11 @@ def get_cc_version(conf, cc, gcc=False, icc=False, clang=False):
+ 	if not clang and out.find('__clang__') >= 0:
+ 		conf.fatal('Could not find gcc/g++ (only Clang), if renamed try eg: CC=gcc48 CXX=g++48 waf configure')
+ 
++	if tcc and out.find('__TINYC__') < 0:
++		conf.fatal('Not tcc')
++
+ 	k = {}
+-	if icc or gcc or clang:
++	if icc or gcc or clang or tcc:
+ 		out = out.splitlines()
+ 		for line in out:
+ 			lst = shlex.split(line)
+@@ -1079,6 +1082,8 @@ def get_cc_version(conf, cc, gcc=False, icc=False, clang=False):
+ 		if icc:
+ 			ver = k['__INTEL_COMPILER']
+ 			conf.env.CC_VERSION = (ver[:-2], ver[-2], ver[-1])
++		elif tcc: # One number, like 927 (for "0.9.27"). Not worth guessing how to split.
++			conf.env.CC_VERSION = (k['__TINYC__'])
+ 		else:
+ 			if isD('__clang__') and isD('__clang_major__'):
+ 				conf.env.CC_VERSION = (k['__clang_major__'], k['__clang_minor__'], k['__clang_patchlevel__'])
+diff --git a/waflib/Tools/compiler_c.py b/waflib/Tools/compiler_c.py
+index 2dba3f82..cc03b61d 100644
+--- a/waflib/Tools/compiler_c.py
++++ b/waflib/Tools/compiler_c.py
+@@ -40,7 +40,7 @@ c_compiler = {
+ 'cygwin': ['gcc'],
+ 'darwin': ['clang', 'gcc'],
+ 'aix':    ['xlc', 'gcc', 'clang'],
+-'linux':  ['gcc', 'clang', 'icc'],
++'linux':  ['gcc', 'clang', 'icc', 'tcc'],
+ 'sunos':  ['suncc', 'gcc'],
+ 'irix':   ['gcc', 'irixcc'],
+ 'hpux':   ['gcc'],
+diff --git a/waflib/Tools/gcc.py b/waflib/Tools/gcc.py
+index 34127d11..047a8d43 100644
+--- a/waflib/Tools/gcc.py
++++ b/waflib/Tools/gcc.py
+@@ -131,6 +131,15 @@ def gcc_modifier_osf1V(conf):
+ 	v.STLIB_MARKER        = []
+ 	v.SONAME_ST           = []
+ 
++@conf
++def gcc_modifier_tcc(conf):
++	"""Configuration flags for executing using tcc instead of gcc"""
++	v = conf.env
++	v.SHLIB_MARKER        = []
++	v.STLIB_MARKER        = []
++	v.LINKFLAGS_cstlib    = []
++	v.SONAME_ST           = '-Wl,-soname=%s'
++
+ @conf
+ def gcc_modifier_platform(conf):
+ 	"""Execute platform-specific functions based on *gcc_modifier_+NAME*"""
+diff --git a/waflib/Tools/tcc.py b/waflib/Tools/tcc.py
+new file mode 100644
+index 00000000..1c14d8fd
+--- /dev/null
++++ b/waflib/Tools/tcc.py
+@@ -0,0 +1,45 @@
++#!/usr/bin/env python
++# encoding: utf-8
++# Avi Halachmi 2017
++
++# Detect the Tinyc (tcc) C compiler
++
++from os import path
++
++from waflib.Tools import ccroot, ar, gcc
++from waflib.Configure import conf
++
++@conf
++def find_tcc(conf):
++	# Finds the program tcc and executes it to ensure it really is tcc
++	cc = conf.find_program('tcc', var='CC')
++	conf.get_cc_version(cc, tcc=True)
++	conf.env.CC_NAME = 'tcc'
++
++@conf
++def find_tcc_ar(conf):
++	# tcc itself is also ar, e.g. 'tcc -ar rcs mylib.a file1.o file2.o' .
++	# 'tcc -ar' always does rcs, possibly with v. Because it's uncommon
++	# that ar is program + arg, allow also using a dedicated 'tcc-ar' program
++	# (e.g. printf '#!/bin/sh\ntcc -ar "$@"' > /usr/local/bin/tcc-ar ). gnu ar
++	# is more complete though, so fallback from the compatible to the trickiest.
++	conf.find_program(['ar', 'tcc-ar', 'tcc'], var='AR')
++	conf.add_os_flags('ARFLAGS')
++	# If the user specified ARFLAGS, don't mess with it. Else use rcs, prefixed
++	# with -ar if it's tcc (detected generically as [<platform>-]tcc[.exe] ).
++	if not conf.env.ARFLAGS:
++		conf.env.ARFLAGS = ['rcs']
++		prog = path.basename(conf.env.AR[-1])
++		prog = path.splitext(prog)[0]
++		if prog == 'tcc' or prog.endswith('-tcc'):
++			conf.env.ARFLAGS.insert(0, '-ar')
++
++def configure(conf):
++	conf.find_tcc()
++	conf.find_tcc_ar()
++	conf.gcc_common_flags()
++	conf.gcc_modifier_platform()
++	conf.gcc_modifier_tcc()
++	conf.cc_load_tools()
++	conf.cc_add_flags()
++	conf.link_add_flags()
+-- 
+2.14.2
+
