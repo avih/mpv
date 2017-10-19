@@ -1,4 +1,6 @@
 #pragma once
+#ifndef V_O_G_RA_H
+#define V_O_G_RA_H
 
 #include "common/common.h"
 #include "misc/bstr.h"
@@ -550,3 +552,5 @@ void ra_dump_tex_formats(struct ra *ra, int msgl);
 void ra_dump_imgfmt_desc(struct ra *ra, const struct ra_imgfmt_desc *desc,
                          int msgl);
 void ra_dump_img_formats(struct ra *ra, int msgl);
+
+#endif /* V_O_G_RA_H */

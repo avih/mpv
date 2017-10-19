@@ -1,4 +1,6 @@
 #pragma once
+#ifndef V_O_G_CONTEXT_H
+#define V_O_G_CONTEXT_H
 
 #include "video/out/vo.h"
 #include "video/csputils.h"
@@ -103,3 +105,5 @@ int ra_ctx_validate_api(struct mp_log *log, const struct m_option *opt,
                         struct bstr name, struct bstr param);
 int ra_ctx_validate_context(struct mp_log *log, const struct m_option *opt,
                             struct bstr name, struct bstr param);
+
+#endif /* V_O_G_CONTEXT_H */
