@@ -114,6 +114,7 @@ SOURCES-$(LIBAVFILTER)          += video/filter/vf_lavfi.c \
                                    audio/filter/af_lavfi.c
 
 SOURCES-$(LUA)                  += player/lua.c
+SOURCES-$(JAVASCRIPT)           += player/javascript.c
 SOURCES-$(VAPOURSYNTH_CORE)     += video/filter/vf_vapoursynth.c
 SOURCES-$(LIBARCHIVE)           += demux/demux_libarchive.c \
                                    stream/stream_libarchive.c
@@ -388,6 +389,10 @@ player/lua.c: player/lua/defaults.inc \
               player/lua/stats.inc \
               player/lua/options.inc
 
+player/javascript/defaults.js.inc: TOOLS/file2string.py player/javascript/defaults.js
+	./$^ >$@
+player/javascript.c: player/javascript/defaults.js.inc
+
 etc/_mpv: TOOLS/zsh.pl ./mpv
 	./$< > $@
 
@@ -496,6 +501,7 @@ clean:
 	-$(RM) player/lua/ytdl_hook.inc
 	-$(RM) player/lua/stats.inc
 	-$(RM) player/lua/options.inc
+	-$(RM) player/javascript/defaults.js.inc
 
 distclean: clean
 	-$(RM) old_build/config.log old_build/config.h old_build/config.mak Makefile
