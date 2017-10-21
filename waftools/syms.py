@@ -44,6 +44,8 @@ def do_the_symbol_stuff(self):
         self.link_task.env.append_value('LINKFLAGS', ['/def:' + tsk.outputs[0].bldpath()])
     elif self.env.DEST_BINFMT == 'pe': #gcc on windows takes *.def as an additional input
         self.link_task.inputs.append(tsk.outputs[0])
+    elif 'tcc' in (self.env.CC_NAME): # export all [public] symbols. not sure if tcc can export a specific set.
+        self.link_task.env.append_value('LINKFLAGS', ['-Wl,-export-all-symbols'])
     elif self.env.DEST_BINFMT == 'elf':
         self.link_task.env.append_value('LINKFLAGS', ['-Wl,-version-script', '-Wl,' + tsk.outputs[0].bldpath()])
     elif self.env.DEST_BINFMT == 'mac-o':

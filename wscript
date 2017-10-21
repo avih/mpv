@@ -188,6 +188,13 @@ main_dependencies = [
         'deps': 'os-darwin',
         'func': compose_checks(check_swift('4.1'), check_macos_sdk('10.10')),
     }, {
+        'name': 'tcc',
+        'desc': 'Tiny C (tcc) compiler',
+        'func': check_statement([], "__TINYC__"),
+        # FIXME: tcc detection was used to allow atomic without gcc, possibly
+        #        with "slow emulation", but now atomic (below) is mandatory and
+        #        slow emulation is gone, so tcc build is likely broken now.
+    }, {
         'name': '--uwp',
         'desc': 'Universal Windows Platform',
         'default': 'disable',
