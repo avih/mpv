@@ -315,6 +315,7 @@ DIRS =  . \
         video/filter \
         video/out \
         video/out/opengl \
+        video/out/gpu \
         video/out/wayland
 
 
@@ -478,7 +479,7 @@ clean:
 	-$(RM) $(call ADD_ALL_DIRS,/*.o /*.d /*.a /*.ho /*~)
 	-$(RM) $(call ADD_ALL_DIRS,/*.o /*.a /*.ho /*~)
 	-$(RM) mpv
-	-$(RM) DOCS/man/*/mpv.1
+	-$(RM) DOCS/man/*.1
 	-$(RM) old_build/version.h version.h
 	-$(RM) input/input_conf.h
 	-$(RM) video/out/vdpau_template.c
@@ -488,6 +489,7 @@ clean:
 	-$(RM) video/out/x11_icon_64.inc
 	-$(RM) video/out/x11_icon_128.inc
 	-$(RM) sub/osd_font.h
+	-$(RM) player/builtin_conf.inc
 	-$(RM) player/lua/defaults.inc
 	-$(RM) player/lua/assdraw.inc
 	-$(RM) player/lua/osc.inc
@@ -496,7 +498,7 @@ clean:
 	-$(RM) player/lua/options.inc
 
 distclean: clean
-	-$(RM) config.log old_build/config.h old_build/config.mak Makefile
+	-$(RM) old_build/config.log old_build/config.h old_build/config.mak Makefile
 	-rmdir old_build/
 
 -include $(DEP_FILES)
