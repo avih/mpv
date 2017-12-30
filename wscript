@@ -701,22 +701,27 @@ video_output_features = [
         'deps': 'win32-desktop && gpl',
         'func': check_cc(header_name='d3d9.h'),
     }, {
+        'name': 'shaderc-pkgconfig',
+        'desc': 'libshaderc SPIR-V compiler (pkgconfig)',
+        'groups': ['shaderc'],
+        'func': check_pkg_config('shaderc'),
+    }, {
         'name': 'shaderc-shared',
         'desc': 'libshaderc SPIR-V compiler (shared library)',
-        'deps': '!static-build',
+        'deps': '!static-build && !shaderc-pkgconfig',
         'groups': ['shaderc'],
         'func': check_cc(header_name='shaderc/shaderc.h', lib='shaderc_shared'),
     }, {
         'name': 'shaderc-static',
         'desc': 'libshaderc SPIR-V compiler (static library)',
-        'deps': '!shaderc-shared',
+        'deps': '!shaderc-shared && !shaderc-pkgconfig',
         'groups': ['shaderc'],
         'func': check_cc(header_name='shaderc/shaderc.h',
                          lib=['shaderc_combined', 'stdc++']),
     }, {
         'name': '--shaderc',
         'desc': 'libshaderc SPIR-V compiler',
-        'deps': 'shaderc-shared || shaderc-static',
+        'deps': 'shaderc-pkgconfig || shaderc-shared || shaderc-static',
         'func': check_true,
     }, {
         'name': 'spirv-cross-shared',
