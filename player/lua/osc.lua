@@ -2636,13 +2636,30 @@ mp.observe_property("osd-dimensions", "native", function(name, val)
 end)
 
 -- mouse show/hide bindings
+-- Mouse move/leave can be useful to other scripts even when the osc is enabled,
+-- but only one script at a time can be notified, and the osc force-binds the
+-- whole window area, so it's the sole recipient of move/leave when enabled.
+--
+-- To improve it, we establish a convention that whoever happens to get the bind
+-- also broadcasts move/leave as script message, and any script which wants to
+-- use them should follow this convention (only for move and/or leave), e.g.:
+--     -- broadcast if we happen to get the bind (e.g. maybe with --no-osc)
+--     mp.add_key_binding("mouse_move", function() mp.command("script-message mouse_move") end)
+--     mp.add_key_binding("mouse_leave", function() mp.command("script-message mouse_leave") end)
+--     -- act on the message regardless of who broadcasted it.
+--     mp.register_script_message("mouse_move", my_move_handler)
+--     mp.register_script_message("mouse_leave", my_leave_handler)
+-- Note: move only fires over the window, so it can be also act as mouse-enter.
+
+mp.register_script_message("mouse_move", function() process_event("mouse_move", nil) end)
+mp.register_script_message("mouse_leave", mouse_leave)
 mp.set_key_bindings({
-    {"mouse_move",              function(e) process_event("mouse_move", nil) end},
-    {"mouse_leave",             mouse_leave},
+    {"mouse_move",  function() mp.command("script-message mouse_move") end},
+    {"mouse_leave", function() mp.command("script-message mouse_leave") end},
 }, "showhide", "force")
 mp.set_key_bindings({
-    {"mouse_move",              function(e) process_event("mouse_move", nil) end},
-    {"mouse_leave",             mouse_leave},
+    {"mouse_move",  function() mp.command("script-message mouse_move") end},
+    {"mouse_leave", function() mp.command("script-message mouse_leave") end},
 }, "showhide_wc", "force")
 do_enable_keybindings()
 
