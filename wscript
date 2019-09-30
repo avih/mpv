@@ -339,9 +339,23 @@ iconv support use --disable-iconv.",
         'desc' : 'Lua',
         'func': check_lua,
     }, {
-        'name' : '--javascript',
-        'desc' : 'Javascript (MuJS backend)',
+        'name' : '--quickjs',
+        # quickjs installs <prefix>/lib/quickjs/libquickjs.a
+        'desc' : 'quickjs (use LDFLAGS=-L/path/to/prefix/lib/quickjs)',
+        'default': 'disable',
+        'func': check_statement('quickjs/quickjs.h',
+                                'JS_NewRuntime()', lib='quickjs'),
+        #'func': check_pkg_config('quickjs', '>= 2019.9.18'),
+    }, {
+        'name' : '--mujs',
+        'desc' : 'MuJS',
+        'deps' : '!quickjs',
         'func': check_pkg_config('mujs', '>= 1.0.0'),
+    }, {
+        'name' : '--javascript',
+        'desc' : 'Javascript support',
+        'deps' : 'mujs || quickjs',
+        'func': check_true,
     }, {
         'name': 'libass',
         'desc': 'SSA/ASS support',

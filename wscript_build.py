@@ -115,6 +115,11 @@ def build(ctx):
         source = "player/javascript/defaults.js",
         target = "player/javascript/defaults.js.inc",
     )
+    ctx(
+        features = "file2string",
+        source = "player/javascript/qdefaults.js",
+        target = "player/javascript/qdefaults.js.inc",
+    )
 
     if ctx.dependency_satisfied('wayland'):
         ctx.wayland_protocol_code(proto_dir = ctx.env.WL_PROTO_DIR,
@@ -355,7 +360,8 @@ def build(ctx):
         ( "player/command.c" ),
         ( "player/configfiles.c" ),
         ( "player/external_files.c" ),
-        ( "player/javascript.c",                 "javascript" ),
+        ( "player/javascript.c",                 "mujs" ),
+        ( "player/qjavascript.c",                "quickjs" ),
         ( "player/loadfile.c" ),
         ( "player/lua.c",                        "lua" ),
         ( "player/main.c" ),
