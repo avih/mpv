@@ -111,6 +111,69 @@ done: \
     if (jerr) \
         return (rv);
 
+
+#define JEX_BEGIN_AF(n) \
+    int jerr = 0; \
+    static const int qn_ = n; \
+    int qsan_ = 0; const char* qsa_[n]; \
+    int qvan_ = 0; JSValue qva_[n];
+
+#define JTRYV_AF(expr) do { \
+    assert(qvan_ < qn_); \
+    if (JOKV(qva_[qvan_] = (expr))) \
+        qvan_++; \
+    else \
+        JTHROW; \
+} while (0)
+
+#define JTRYS_AF(expr) do { \
+    assert(qsan_ < qn_); \
+    if (JOKS(qsa_[qsan_] = (expr))) \
+        qsan_++; \
+    else \
+        JTHROW; \
+} while (0)
+
+#define JEX_END_ONERR_AF(rv) \
+done: \
+    while (qsan_ > 0) \
+        JS_FreeCString(J, qsa_[--qsan_]); \
+    while (qvan_ > 0) \
+        JS_FreeValue(J, qva_[--qvan_]); \
+    if (jerr) \
+        return (rv);
+
+
+// typedef struct qaf_val { JSContext *J; JSValue v; } qaf_val;
+// typedef struct qaf_cstr { JSContext *J; const char *s; } qaf_cstr;
+
+// static void destruct_af_qval(void *p)
+// {
+//     qaf_val *pq = (qaf_val*)p;
+//     JS_FreeValue(pq->J, pq->v);
+// }
+// static void add_af_qval(void *parent, JSContext *J,  JSValue v)
+// {
+//     qaf_val *pq = talloc(parent, qaf_val);
+//     pq->J = J;
+//     pq->v = v;
+//     talloc_set_destructor(pq, destruct_af_qval);
+// }
+
+// static void destruct_af_qcstr(void *p)
+// {
+//     qaf_cstr *pq = (qaf_val*)p;
+//     JS_FreeCString(pq->J, pq->s);
+// }
+// static void add_af_qcstr(void *parent, JSContext *J,  const char *s)
+// {
+//     qaf_cstr *pq = talloc(parent, qaf_cstr);
+//     pq->J = J;
+//     pq->s = s;
+//     talloc_set_destructor(pq, destruct_af_qcstr);
+// }
+
+
 #define appendf(ptr, ...) \
     do {(*(ptr)) = talloc_asprintf_append_buffer(*(ptr), __VA_ARGS__);} while(0)
 
