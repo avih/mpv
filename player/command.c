@@ -2498,6 +2498,33 @@ static int mp_property_osd_ass(void *ctx, struct m_property *prop,
     return m_property_read_sub(props, action, arg);
 }
 
+static int mp_property_mouse_pos(void *ctx, struct m_property *prop,
+                                    int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+
+    switch (action) {
+    case M_PROPERTY_GET_TYPE:
+        *(struct m_option *)arg = (struct m_option){.type = CONF_TYPE_NODE};
+        return M_PROPERTY_OK;
+
+    case M_PROPERTY_GET: {
+        struct mpv_node node;
+        int x, y;
+        mp_input_get_mouse_pos(mpctx->input, &x, &y);
+
+        node_init(&node, MPV_FORMAT_NODE_MAP, NULL);
+        node_map_add_int64(&node, "x", x);
+        node_map_add_int64(&node, "y", y);
+        *(struct mpv_node *)arg = node;
+
+        return M_PROPERTY_OK;
+    }
+    }
+
+    return M_PROPERTY_NOT_IMPLEMENTED;
+}
+
 /// Video fps (RO)
 static int mp_property_fps(void *ctx, struct m_property *prop,
                            int action, void *arg)
@@ -3405,6 +3432,8 @@ static const struct m_property mp_properties_base[] = {
 
     {"osd-sym-cc", mp_property_osd_sym},
     {"osd-ass-cc", mp_property_osd_ass},
+
+    {"mouse-pos", mp_property_mouse_pos},
 
     // Subs
     {"sid", property_switch_track, .priv = (void *)(const int[]){0, STREAM_SUB}},
