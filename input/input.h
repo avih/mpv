@@ -20,6 +20,7 @@
 
 #include <stdbool.h>
 #include "misc/bstr.h"
+#include "player/core.h"
 
 #include "cmd.h"
 
@@ -173,7 +174,7 @@ bool mp_input_test_dragging(struct input_ctx *ictx, int x, int y);
 
 // Initialize the input system
 struct mpv_global;
-struct input_ctx *mp_input_init(struct mpv_global *global,
+struct input_ctx *mp_input_init(struct MPContext *mpctx,
                                 void (*wakeup_cb)(void *ctx),
                                 void *wakeup_ctx);
 

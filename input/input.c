@@ -49,6 +49,7 @@
 #include "misc/node.h"
 #include "stream/stream.h"
 #include "common/common.h"
+#include "player/command.h"
 
 #if HAVE_COCOA
 #include "osdep/macosx_events.h"
@@ -97,6 +98,7 @@ struct wheel_state {
 };
 
 struct input_ctx {
+    struct MPContext *mpctx;
     pthread_mutex_t mutex;
     struct mp_log *log;
     struct mpv_global *global;
@@ -721,6 +723,7 @@ static void mp_input_feed_key(struct input_ctx *ictx, int code, double scale,
         return;
     if (unmod == MP_KEY_MOUSE_LEAVE || unmod == MP_KEY_MOUSE_ENTER) {
         ictx->mouse_hover = unmod == MP_KEY_MOUSE_ENTER;
+        mp_notify_property(ictx->mpctx, "mouse-pos");
         update_mouse_section(ictx);
         mp_input_queue_cmd(ictx, get_cmd_from_keys(ictx, NULL, code));
         return;
@@ -844,6 +847,7 @@ void mp_input_set_mouse_pos_artificial(struct input_ctx *ictx, int x, int y)
     ictx->mouse_event_counter++;
     ictx->mouse_vo_x = x;
     ictx->mouse_vo_y = y;
+    mp_notify_property(ictx->mpctx, "mouse-pos");
 
     update_mouse_section(ictx);
     struct mp_cmd *cmd = get_cmd_from_keys(ictx, NULL, MP_KEY_MOUSE_MOVE);
@@ -1302,18 +1306,19 @@ done:
     return r;
 }
 
-struct input_ctx *mp_input_init(struct mpv_global *global,
+struct input_ctx *mp_input_init(struct MPContext *mpctx,
                                 void (*wakeup_cb)(void *ctx),
                                 void *wakeup_ctx)
 {
 
     struct input_ctx *ictx = talloc_ptrtype(NULL, ictx);
     *ictx = (struct input_ctx){
-        .global = global,
+        .mpctx = mpctx,
+        .global = mpctx->global,
         .ar_state = -1,
-        .log = mp_log_new(ictx, global->log, "input"),
+        .log = mp_log_new(ictx, mpctx->global->log, "input"),
         .mouse_section = "default",
-        .opts_cache = m_config_cache_alloc(ictx, global, &input_config),
+        .opts_cache = m_config_cache_alloc(ictx, mpctx->global, &input_config),
         .wakeup_cb = wakeup_cb,
         .wakeup_ctx = wakeup_ctx,
     };
