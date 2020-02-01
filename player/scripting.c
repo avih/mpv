@@ -156,7 +156,7 @@ static int mp_load_script(struct MPContext *mpctx, const char *fname)
     }
 
     if (!backend) {
-        MP_ERR(mpctx, "Can't load unknown script: %s\n", fname);
+        MP_VERBOSE(mpctx, "Can't load unknown script: %s\n", fname);
         talloc_free(tmp);
         return -1;
     }
