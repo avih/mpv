@@ -81,6 +81,170 @@ static void makenode(void *ta_ctx, mpv_node *dst, js_State *J, int idx);
 static int jsL_checkint(js_State *J, int idx);
 static uint64_t jsL_checkuint64(js_State *J, int idx);
 
+
+// Strings from mujs are null-terminated CESU-8. Strings sent to mujs are CESU-8
+// either null-terminated or lstring, so to_cesu8 supports both variants.
+//
+// Unicode supplementary codepoint is U+10000 or higher. In UTF-8 it's a 4-bytes
+// sequence, and in CESU-8 it's 6 (pair of 3-bytes surrogates). Other codepoints
+// are encoded as identical sequences in UTF-8 and CESU-8.
+//
+// CP >= U+10000 in UTF-8: 11110ccc 10ccbbbb 10bbbbaa 10aaaaaa
+// The top 5 bits (ccccc) must be non-zero and equal-to-or-less-than 0x10
+//
+// CP >= U+10000 in CESU-8: 11101101 1010yyyy 10bbbbbb 11101101 1011bbaa 10aaaaaa
+// the CP lower 16 bits are bb...aa, the top 5 are yyyy + 1
+
+/*
+// temporary debug functions
+
+static void print_blob(const unsigned char *s, size_t len)
+{
+    static const char digits[] = "0123456789ABCDEF";
+    for (; len--; s++)
+        fprintf(stderr, (len ? "%c%c " : "%c%c"), digits[*s >> 4], digits[*s & 0x0f]);
+}
+
+static void dbg_cesu_utf_cp(const char *cesu, const char *utf, int cesu2utf)
+{
+    fprintf(stderr, "(CESU-8) ");
+    print_blob(cesu, 6);
+
+    fprintf(stderr, "%s", cesu2utf ? "  -->  " : "  <--  ");
+
+    fprintf(stderr, "(UTF-8) ");
+    print_blob(utf, 4);
+
+    fprintf(stderr, "\n");
+    fflush(stderr);
+}
+*/
+
+
+// CESU-8 to UTF-8
+
+// tests up to 6 chars, aborts correctly on string termination
+static inline int is_cesu8_supp(const unsigned char *s)
+{
+    return s[0] == 0xed && (s[1] & 0xf0) == 0xa0 && (s[2] & 0xc0) == 0x80 &&
+           s[3] == 0xed && (s[4] & 0xf0) == 0xb0 && (s[5] & 0xc0) == 0x80;
+}
+
+static void cesu8_supp_to_utf8(const unsigned char *csrc, unsigned char *udst)
+{
+    unsigned char top5 = (csrc[1] & 0x0f) + 1;
+
+    udst[0] = 0xf0 | top5 >> 2;
+    udst[1] = 0x80 | (top5 & 0x03) << 4 | (csrc[2] & 0x3f) >> 2;
+    udst[2] = 0x80 | (csrc[2] & 0x03) << 4 | (csrc[4] & 0x0f);
+    udst[3] = csrc[5];
+
+    // dbg_cesu_utf_cp(csrc, udst, 1);
+}
+
+static const char *convert_from_cesu8(void *ctx, const char *cesu8)
+{
+    char *rv = ta_alloc_size(ctx, strlen(cesu8) + 1);
+    char *utf8 = rv;
+
+    while (*cesu8) {
+        if (is_cesu8_supp(cesu8)) {
+            cesu8_supp_to_utf8(cesu8, utf8);
+            cesu8 += 6;
+            utf8 += 4;
+        } else {
+            *utf8++ = *cesu8++;
+        }
+    }
+
+    *utf8 = 0;
+    return rv;
+}
+
+static const char *from_cesu8(void *ctx, const char *cesu8)
+{
+    for (size_t i = 0; cesu8[i]; i++) {
+        if (is_cesu8_supp(cesu8 + i))
+            return convert_from_cesu8(ctx, cesu8);
+    }
+
+    return cesu8;
+}
+
+
+// UTF-8 to CESU-8
+
+// tests up to 4 chars, aborts correctly on string termination
+static inline int is_utf8_supp(const unsigned char *s)
+{
+    return (s[0] & 0xf8) == 0xf0 &&
+           (s[1] & 0xc0) == 0x80 && (s[2] & 0xc0) == 0x80 && (s[3] & 0xc0) == 0x80 &&
+           !(s[0] & 0x04) != !((s[0] & 0x03) | (s[1] & 0x30)) /* top5: 0x01..0x10 */;
+}
+
+static void utf8_supp_to_cesu8(const unsigned char *usrc, unsigned char *cdst)
+{
+    unsigned char top5 = (usrc[0] & 0x07) << 2 | (usrc[1] & 0x30) >> 4;
+
+    cdst[0] = 0xed;
+    cdst[1] = 0xa0 | (top5 - 1);
+    cdst[2] = 0x80 | (usrc[1] & 0x0f) << 2 | (usrc[2] & 0x30) >> 4;
+
+    cdst[3] = 0xed;
+    cdst[4] = 0xb0 | (usrc[2] & 0x0f);
+    cdst[5] = usrc[3];
+
+    // dbg_cesu_utf_cp(cdst, usrc, 0);
+}
+
+static const char *convert_to_cesu8l(void *ctx, const char *utf8, size_t len,
+                                     size_t *cesu_len)
+{
+    char *rv = ta_alloc_size(ctx, (len + 1) / 2 * 3 + 1); // >= ceil(len*1.5)+1
+    char *cesu8 = rv;
+
+    while (len) {
+        if (len >= 4 && is_utf8_supp(utf8)) {
+            utf8_supp_to_cesu8(utf8, cesu8);
+            utf8 += 4;
+            cesu8 += 6;
+            len -= 4;
+        } else {
+            *cesu8++ = *utf8++;
+            len--;
+        }
+    }
+
+    *cesu8 = 0;  // if we convert - we also null-terminate
+    if (cesu_len)
+        *cesu_len = cesu8 - rv;
+    return rv;
+}
+
+static const char *to_cesu8l(void *ctx, const char *utf8, size_t len, size_t *cesu8_len)
+{
+    if (len >= 4) {
+        for (size_t i = 0; i <= len - 4; i++) {
+            if (is_utf8_supp(utf8 + i))
+                return convert_to_cesu8l(ctx, utf8, len, cesu8_len);
+        }
+    }
+
+    *cesu8_len = len;
+    return utf8;
+}
+
+static const char *to_cesu8(void *ctx, const char *utf8)
+{
+    for (size_t i = 0; utf8[i]; i++) {
+        if (is_utf8_supp(utf8 + i))
+            return convert_to_cesu8l(ctx, utf8, strlen(utf8), NULL);
+    }
+
+    return utf8;
+}
+
+
 /**********************************************************************
  *  conventions, MuJS notes and vm errors
  *********************************************************************/
