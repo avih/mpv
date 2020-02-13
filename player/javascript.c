@@ -26,6 +26,7 @@
 #include <stdint.h>
 
 #include <mujs.h>
+#include "mujsutf8.h"
 
 #include "osdep/io.h"
 #include "mpv_talloc.h"
