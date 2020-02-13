@@ -628,6 +628,7 @@ static int check_free_buffer_size(struct ao *ao)
     if (space < p->underrun_check) {
         // there's no useful data in the buffers
         space = p->buffer_size;
+        ao_underrun_event(ao);
         reset(ao);
     }
     p->underrun_check = space;
@@ -694,6 +695,7 @@ const struct ao_driver audio_out_dsound = {
     .get_delay = get_delay,
     .pause     = audio_pause,
     .resume    = audio_resume,
+    .reports_underruns = true,
     .reset     = reset,
     .list_devs = list_devs,
     .priv_size = sizeof(struct priv),
