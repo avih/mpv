@@ -76,7 +76,7 @@ static mpv_handle *jclient(js_State *J)
     return jctx(J)->client;
 }
 
-static void pushnode(js_State *J, mpv_node *node);
+static void pushnode(void *af, js_State *J, mpv_node *node);
 static void makenode(void *ta_ctx, mpv_node *dst, js_State *J, int idx);
 static int jsL_checkint(js_State *J, int idx);
 static uint64_t jsL_checkuint64(js_State *J, int idx);
@@ -242,6 +242,29 @@ static const char *to_cesu8(void *ctx, const char *utf8)
     }
 
     return utf8;
+}
+
+
+// cesu-8 aware wrappers for common mujs string APIs, with additional talloc
+// ctx which might needs to be freed later (if a conversion took place).
+
+static const char *mp_js_tostring(void *af, js_State *J, int idx)
+{
+    const char *cesu = js_tostring(J, idx);
+    return from_cesu8(af, cesu);
+}
+
+static void mp_js_pushstring(void *af, js_State *J, const char *s)
+{
+    const char *cesu = to_cesu8(af, s);
+    js_pushstring(J, cesu);
+}
+
+static void mp_js_pushlstring(void *af, js_State *J, const char *s, size_t len)
+{
+    size_t cesu_len;
+    const char *cesu = to_cesu8l(af, s, len, &cesu_len);
+    js_pushlstring(J, cesu, cesu_len);
 }
 
 
@@ -496,7 +519,7 @@ static void af_push_file(js_State *J, const char *fname, int limit, void *af)
 
     const char *builtin = get_builtin_file(filename);
     if (builtin) {
-        js_pushlstring(J, builtin, MPMIN(limit, strlen(builtin)));
+        mp_js_pushlstring(af, J, builtin, MPMIN(limit, strlen(builtin)));
         return;
     }
 
@@ -513,7 +536,7 @@ static void af_push_file(js_State *J, const char *fname, int limit, void *af)
         int r = fread(s + got, 1, want, f);
 
         if (feof(f) || (len == limit && r == want)) {
-            js_pushlstring(J, s, got + r);
+            mp_js_pushlstring(af, J, s, got + r);
             return;
         }
         if (r != want)
@@ -547,10 +570,10 @@ static void push_file_content(js_State *J, const char *fname, int limit)
 }
 
 // utils.read_file(..). args: fname [,max]. returns [up to max] bytes as string.
-static void script_read_file(js_State *J)
+static void script_read_file(js_State *J, void *af)
 {
     int limit = js_isundefined(J, 2) ? -1 : jsL_checkint(J, 2);
-    push_file_content(J, js_tostring(J, 1), limit);
+    push_file_content(J, mp_js_tostring(af, J, 1), limit);
 }
 
 // Runs a file with the caller's this, leaves the stack as is.
@@ -692,7 +715,7 @@ static int checkopt(js_State *J, int idx, const char *def, const char *opts[],
 }
 
 // args: level as string and a variable numbers of args to print. adds final \n
-static void script_log(js_State *J)
+static void script_log(js_State *J, void *af)
 {
     const char *level = js_tostring(J, 1);
     int msgl = mp_msg_find_level(level);
@@ -701,17 +724,17 @@ static void script_log(js_State *J)
 
     struct mp_log *log = jctx(J)->log;
     for (int top = js_gettop(J), i = 2; i < top; i++)
-        mp_msg(log, msgl, (i == 2 ? "%s" : " %s"), js_tostring(J, i));
+        mp_msg(log, msgl, (i == 2 ? "%s" : " %s"), mp_js_tostring(af, J, i));
     mp_msg(log, msgl, "\n");
     push_success(J);
 }
 
 static void script_find_config_file(js_State *J, void *af)
 {
-    const char *fname = js_tostring(J, 1);
+    const char *fname = mp_js_tostring(af, J, 1);
     char *path = mp_find_config_file(af, jctx(J)->mpctx->global, fname);
     if (path) {
-        js_pushstring(J, path);
+        mp_js_pushstring(af, J, path);
     } else {
         push_failure(J, "not found");
     }
@@ -762,10 +785,10 @@ static void script_commandv(js_State *J)
 }
 
 // args: name, string value
-static void script_set_property(js_State *J)
+static void script_set_property(js_State *J, void *af)
 {
     int e = mpv_set_property_string(jclient(J), js_tostring(J, 1),
-                                                js_tostring(J, 2));
+                                                mp_js_tostring(af, J, 2));
     push_status(J, e);
 }
 
@@ -806,7 +829,7 @@ static void script_get_property(js_State *J, void *af)
     if (e >= 0)
         add_af_mpv_alloc(af, res);
     if (!pushed_error(J, e, 2))
-        js_pushstring(J, res);
+        mp_js_pushstring(af, J, res);
 }
 
 // args: name [,def]
@@ -836,7 +859,7 @@ static void script_get_property_native(js_State *J, void *af)
     mpv_node *presult_node = new_af_mpv_node(af);
     int e = mpv_get_property(h, name, MPV_FORMAT_NODE, presult_node);
     if (!pushed_error(J, e, 2))
-        pushnode(J, presult_node);
+        pushnode(af, J, presult_node);
 }
 
 // args: name [,def]
@@ -849,7 +872,7 @@ static void script_get_property_osd(js_State *J, void *af)
     if (e >= 0)
         add_af_mpv_alloc(af, res);
     if (!pushed_error(J, e, 2))
-        js_pushstring(J, res);
+        mp_js_pushstring(af, J, res);
 }
 
 // args: id, name, type
@@ -881,7 +904,7 @@ static void script_command_native(js_State *J, void *af)
     mpv_node *presult_node = new_af_mpv_node(af);
     int e = mpv_command_node(jclient(J), &cmd, presult_node);
     if (!pushed_error(J, e, 2))
-        pushnode(J, presult_node);
+        pushnode(af, J, presult_node);
 }
 
 // args: async-command-id, native-command
@@ -968,7 +991,7 @@ static void script_readdir(js_State *J, void *af)
 {
     //                    0      1        2       3
     const char *filters[] = {"all", "files", "dirs", "normal", NULL};
-    const char *path = js_isundefined(J, 1) ? "." : js_tostring(J, 1);
+    const char *path = js_isundefined(J, 1) ? "." : mp_js_tostring(af, J, 1);
     int t = checkopt(J, 2, "normal", filters, "listing filter");
 
     DIR *dir = opendir(path);
@@ -999,14 +1022,14 @@ static void script_readdir(js_State *J, void *af)
                 continue;
             }
         }
-        js_pushstring(J, name);
+        mp_js_pushstring(af, J, name);
         js_setindex(J, -2, n++);
     }
 }
 
-static void script_file_info(js_State *J)
+static void script_file_info(js_State *J, void *af)
 {
-    const char *path = js_tostring(J, 1);
+    const char *path = mp_js_tostring(af, J, 1);
 
     struct stat statbuf;
     if (stat(path, &statbuf) != 0) {
@@ -1039,26 +1062,27 @@ static void script_file_info(js_State *J)
 }
 
 
-static void script_split_path(js_State *J)
+static void script_split_path(js_State *J, void *af)
 {
-    const char *p = js_tostring(J, 1);
+    const char *p = mp_js_tostring(af, J, 1);
     bstr fname = mp_dirname(p);
     js_newarray(J);
-    js_pushlstring(J, fname.start, fname.len);
+    mp_js_pushlstring(af, J, fname.start, fname.len);
     js_setindex(J, -2, 0);
-    js_pushstring(J, mp_basename(p));
+    mp_js_pushstring(af, J, mp_basename(p));
     js_setindex(J, -2, 1);
 }
 
 static void script_join_path(js_State *J, void *af)
 {
+    // no need for cesu8 conversion because it doesn't matter to mp_path_join
     js_pushstring(J, mp_path_join(af, js_tostring(J, 1), js_tostring(J, 2)));
 }
 
 static void script_get_user_path(js_State *J, void *af)
 {
-    const char *path = js_tostring(J, 1);
-    js_pushstring(J, mp_get_user_path(af, jctx(J)->mpctx->global, path));
+    const char *path = mp_js_tostring(af, J, 1);
+    mp_js_pushstring(af, J, mp_get_user_path(af, jctx(J)->mpctx->global, path));
 }
 
 // args: none
@@ -1071,8 +1095,8 @@ static void script_getpid(js_State *J)
 static void script_write_file(js_State *J, void *af)
 {
     static const char *prefix = "file://";
-    const char *fname = js_tostring(J, 1);
-    const char *data = js_tostring(J, 2);
+    const char *fname = mp_js_tostring(af, J, 1);
+    const char *data = mp_js_tostring(af, J, 2);
     if (strstr(fname, prefix) != fname)  // simple protection for incorrect use
         js_error(J, "File name must be prefixed with '%s'", prefix);
     fname += strlen(prefix);
@@ -1091,11 +1115,11 @@ static void script_write_file(js_State *J, void *af)
 }
 
 // args: env var name
-static void script_getenv(js_State *J)
+static void script_getenv(js_State *J, void *af)
 {
     const char *v = getenv(js_tostring(J, 1));
     if (v) {
-        js_pushstring(J, v);
+        mp_js_pushstring(af, J, v);
     } else {
         js_pushundefined(J);
     }
@@ -1104,6 +1128,7 @@ static void script_getenv(js_State *J)
 // args: as-filename, content-string, returns the compiled result as a function
 static void script_compile_js(js_State *J)
 {
+    // no need for cesu8 conversions because the strings are already cesu8
     js_loadstring(J, js_tostring(J, 1), js_tostring(J, 2));
 }
 
@@ -1119,23 +1144,23 @@ static void script__gc(js_State *J)
  *********************************************************************/
 
 // pushes a js value/array/object from an mpv_node
-static void pushnode(js_State *J, mpv_node *node)
+static void pushnode(void *af, js_State *J, mpv_node *node)
 {
     int len;
     switch (node->format) {
     case MPV_FORMAT_NONE:   js_pushnull(J); break;
-    case MPV_FORMAT_STRING: js_pushstring(J, node->u.string); break;
+    case MPV_FORMAT_STRING: mp_js_pushstring(af, J, node->u.string); break;
     case MPV_FORMAT_INT64:  js_pushnumber(J, node->u.int64); break;
     case MPV_FORMAT_DOUBLE: js_pushnumber(J, node->u.double_); break;
     case MPV_FORMAT_FLAG:   js_pushboolean(J, node->u.flag); break;
     case MPV_FORMAT_BYTE_ARRAY:
-        js_pushlstring(J, node->u.ba->data, node->u.ba->size);
+        mp_js_pushlstring(af, J, node->u.ba->data, node->u.ba->size);
         break;
     case MPV_FORMAT_NODE_ARRAY:
         js_newarray(J);
         len = node->u.list->num;
         for (int n = 0; n < len; n++) {
-            pushnode(J, &node->u.list->values[n]);
+            pushnode(af, J, &node->u.list->values[n]);
             js_setindex(J, -2, n);
         }
         break;
@@ -1143,7 +1168,7 @@ static void pushnode(js_State *J, mpv_node *node)
         js_newobject(J);
         len = node->u.list->num;
         for (int n = 0; n < len; n++) {
-            pushnode(J, &node->u.list->values[n]);
+            pushnode(af, J, &node->u.list->values[n]);
             js_setproperty(J, -2, node->u.list->keys[n]);
         }
         break;
@@ -1241,12 +1266,12 @@ static void makenode(void *ta_ctx, mpv_node *dst, js_State *J, int idx)
 
     } else {  // string, or anything else as string
         dst->format = MPV_FORMAT_STRING;
-        dst->u.string = talloc_strdup(ta_ctx, js_tostring(J, idx));
+        dst->u.string = talloc_strdup(ta_ctx, mp_js_tostring(ta_ctx, J, idx));
     }
 }
 
 // args: wait in secs (infinite if negative) if mpv doesn't send events earlier.
-static void script_wait_event(js_State *J)
+static void script_wait_event(js_State *J, void *af)
 {
     int top = js_gettop(J);
     double timeout = js_isnumber(J, 1) ? js_tonumber(J, 1) : -1;
@@ -1275,7 +1300,7 @@ static void script_wait_event(js_State *J)
         js_setproperty(J, -2, "prefix");  // reply.prefix (e.g. "cplayer")
         js_pushstring(J, msg->level);
         js_setproperty(J, -2, "level");  // reply.level (e.g. "v" or "info")
-        js_pushstring(J, msg->text);
+        mp_js_pushstring(af, J, msg->text);
         js_setproperty(J, -2, "text");  // reply.text
         break;
     }
@@ -1285,7 +1310,7 @@ static void script_wait_event(js_State *J)
 
         js_newarray(J);  // reply.args
         for (int n = 0; n < msg->num_args; n++) {
-            js_pushstring(J, msg->args[n]);
+            mp_js_pushstring(af, J, msg->args[n]);
             js_setindex(J, -2, n);
         }
         js_setproperty(J, -2, "args");  // reply.args (is a strings array)
@@ -1321,11 +1346,11 @@ static void script_wait_event(js_State *J)
         js_setproperty(J, -2, "name");  // reply.name (is a property name)
 
         switch (prop->format) {
-        case MPV_FORMAT_NODE:   pushnode(J, prop->data); break;
+        case MPV_FORMAT_NODE:   pushnode(af, J, prop->data); break;
         case MPV_FORMAT_DOUBLE: js_pushnumber(J, *(double *)prop->data); break;
         case MPV_FORMAT_INT64:  js_pushnumber(J, *(int64_t *)prop->data); break;
         case MPV_FORMAT_FLAG:   js_pushboolean(J, *(int *)prop->data); break;
-        case MPV_FORMAT_STRING: js_pushstring(J, *(char **)prop->data); break;
+        case MPV_FORMAT_STRING: mp_js_pushstring(af, J, *(char **)prop->data); break;
         default:
             js_pushnull(J);  // also for FORMAT_NONE, e.g. observe type "none"
         }
@@ -1342,7 +1367,7 @@ static void script_wait_event(js_State *J)
 
     case MPV_EVENT_COMMAND_REPLY: {
         mpv_event_command *cmd = event->data;
-        pushnode(J, &cmd->result);
+        pushnode(af, J, &cmd->result);
         js_setproperty(J, -2, "result");  // reply.result (mpv node)
         break;
     }
@@ -1366,8 +1391,8 @@ struct fn_entry {
 // Names starting with underscore are wrapped at @defaults.js
 // FN_ENTRY is a normal js C function, AF_ENTRY is an autofree js C function.
 static const struct fn_entry main_fns[] = {
-    FN_ENTRY(log, 1),
-    FN_ENTRY(wait_event, 1),
+    AF_ENTRY(log, 1),
+    AF_ENTRY(wait_event, 1),
     FN_ENTRY(_request_event, 2),
     AF_ENTRY(find_config_file, 1),
     FN_ENTRY(command, 1),
@@ -1380,7 +1405,7 @@ static const struct fn_entry main_fns[] = {
     AF_ENTRY(get_property_native, 2),
     AF_ENTRY(get_property, 2),
     AF_ENTRY(get_property_osd, 2),
-    FN_ENTRY(set_property, 2),
+    AF_ENTRY(set_property, 2),
     FN_ENTRY(set_property_bool, 2),
     FN_ENTRY(set_property_number, 2),
     AF_ENTRY(set_property_native, 2),
@@ -1400,15 +1425,15 @@ static const struct fn_entry main_fns[] = {
 
 static const struct fn_entry utils_fns[] = {
     AF_ENTRY(readdir, 2),
-    FN_ENTRY(file_info, 1),
-    FN_ENTRY(split_path, 1),
+    AF_ENTRY(file_info, 1),
+    AF_ENTRY(split_path, 1),
     AF_ENTRY(join_path, 2),
     AF_ENTRY(get_user_path, 1),
     FN_ENTRY(getpid, 0),
 
-    FN_ENTRY(read_file, 2),
+    AF_ENTRY(read_file, 2),
     AF_ENTRY(write_file, 2),
-    FN_ENTRY(getenv, 1),
+    AF_ENTRY(getenv, 1),
     FN_ENTRY(compile_js, 2),
     FN_ENTRY(_gc, 1),
     {0}
@@ -1438,14 +1463,14 @@ static void add_functions(js_State *J, struct script_ctx *ctx)
     js_getproperty(J, 0, "mp");  // + this mp
     add_package_fns(J, "utils", utils_fns);
 
-    js_pushstring(J, mpv_client_name(ctx->client));
+    mp_js_pushstring(ctx, J, mpv_client_name(ctx->client));
     js_setproperty(J, -2, "script_name");
 
-    js_pushstring(J, ctx->filename);
+    mp_js_pushstring(ctx, J, ctx->filename);
     js_setproperty(J, -2, "script_file");
 
     if (ctx->path) {
-        js_pushstring(J, ctx->path);
+        mp_js_pushstring(ctx, J, ctx->path);
         js_setproperty(J, -2, "script_path");
     }
 
