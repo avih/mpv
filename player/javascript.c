@@ -488,6 +488,49 @@ static void af_newcfunction(js_State *J, af_CFunction fn, const char *name,
     js_defproperty(J, -2, "af_", JS_READONLY | JS_DONTENUM | JS_DONTCONF);
 }
 
+
+// Prototype for semi-autofree functions which can be called from inside the vm.
+typedef void (*sf_CFunction)(js_State*, void**);
+
+// safely run autofree js c function directly
+static int s_run_sf_jsc(js_State *J, sf_CFunction fn, void **af)
+{
+    if (js_try(J))
+        return 1;
+    fn(J, af);
+    js_endtry(J);
+    return 0;
+}
+
+// The trampoline function through which all autofree functions are called from
+// inside the vm. Obtains the target function address and autofree-call it.
+static void script__s_autofree(js_State *J)
+{
+    // The target function is at the "af_" property of this function instance.
+    js_currentfunction(J);
+    js_getproperty(J, -1, "sf_");
+    sf_CFunction fn = (sf_CFunction)js_touserdata(J, -1, "sf_fn");
+    js_pop(J, 2);
+
+    void *af = NULL;
+    int r = s_run_sf_jsc(J, fn, &af);
+    if (af)
+        talloc_free(af);
+    if (r)
+        js_throw(J);
+}
+
+// Identical to js_newcfunction, but the function is inserted with an autofree
+// wrapper, and its prototype should have the additional af argument.
+static void sf_newcfunction(js_State *J, sf_CFunction fn, const char *name,
+                            int length)
+{
+    js_newcfunction(J, script__s_autofree, name, length);
+    js_pushnull(J);  // a prototype for the userdata object
+    js_newuserdata(J, "sf_fn", fn, NULL);  // uses a "af_fn" verification tag
+    js_defproperty(J, -2, "sf_", JS_READONLY | JS_DONTENUM | JS_DONTCONF);
+}
+
 /**********************************************************************
  *  Initialization and file loading
  *********************************************************************/
@@ -1379,18 +1422,46 @@ static void script_wait_event(js_State *J, void *af)
 /**********************************************************************
  *  Script functions setup
  *********************************************************************/
-#define FN_ENTRY(name, length) {#name, length, script_ ## name, NULL}
-#define AF_ENTRY(name, length) {#name, length, NULL, script_ ## name}
+#define FN_ENTRY(name, length) {#name, length, script_ ## name, NULL, NULL}
+#define AF_ENTRY(name, length) {#name, length, NULL, script_ ## name, NULL}
+#define SF_ENTRY(name, length) {#name, length, NULL, NULL, script_ ## name}
 struct fn_entry {
     const char *name;
     int length;
     js_CFunction jsc_fn;
     af_CFunction afc_fn;
+    sf_CFunction sfc_fn;
 };
+
+static void script_af0_str(js_State *J) {
+    js_pushstring(J, "af0_str");
+}
+static void script_af0_csu(js_State *J) {
+    mp_js_pushstring(NULL, J, "af0_csu");
+}
+static void script_af1_str(js_State *J, void *af) {
+    js_pushstring(J, "af1_str");
+}
+static void script_af1_csu(js_State *J, void *af) {
+    mp_js_pushstring(af, J, "af1_csu");
+}
+static void script_af2_str(js_State *J, void **af) {
+    js_pushstring(J, "af2_str");
+}
+static void script_af2_csu(js_State *J, void **af) {
+    mp_js_pushstring(*af, J, "af2_csu");
+}
 
 // Names starting with underscore are wrapped at @defaults.js
 // FN_ENTRY is a normal js C function, AF_ENTRY is an autofree js C function.
 static const struct fn_entry main_fns[] = {
+    FN_ENTRY(af0_str, 0),
+    FN_ENTRY(af0_csu, 0),
+    AF_ENTRY(af1_str, 0),
+    AF_ENTRY(af1_csu, 0),
+    SF_ENTRY(af2_str, 0),
+    SF_ENTRY(af2_csu, 0),
+
     AF_ENTRY(log, 1),
     AF_ENTRY(wait_event, 1),
     FN_ENTRY(_request_event, 2),
@@ -1447,8 +1518,10 @@ static void add_package_fns(js_State *J, const char *module,
     for (int n = 0; e[n].name; n++) {
         if (e[n].jsc_fn) {
             js_newcfunction(J, e[n].jsc_fn, e[n].name, e[n].length);
-        } else {
+        } else if (e[n].afc_fn) {
             af_newcfunction(J, e[n].afc_fn, e[n].name, e[n].length);
+        } else {
+            sf_newcfunction(J, e[n].sfc_fn, e[n].name, e[n].length);
         }
         js_setproperty(J, -2, e[n].name);
     }
