@@ -1,41 +1,80 @@
-/*
- * This file wraps all mujs APIs which take or return strings and makes them
- * fully UTF-8. Simply include it after mujs.h and you're good.
+/******************************************************************************
+ * mujsutf8.h: mostly-transparent UTF-8 wrapper for mujs APIs
+ * Copyright 2019 Avi Halachmi (:avih) avihpit@yahoo.com
+ * [ISC]
  *
- * For mujs APIs which take or return strings, e.g. some js_foo, this file
- * defines the variants u_js_foo and c_js_foo, where the c_ variant is a direct
- * wrapper of js_foo, and the u_ variant exposes a UTF-8 API which converts
- * inputs from UTF-8 to CESU-8 (if required), and converts return values from
- * CESU-8 to UTF-8 (if required).
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
  *
- * It then defines js_foo as u_js_foo such that the normal names become UTF-8
- * APIs, while the CESU-8 API is still available via the c_ variant if needed.
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+ * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+ * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ ******************************************************************************
+ *
+ *
+ * This file wraps all mujs (CESU-8) string APIs with UTF-8 functions.
+ *
+ * How to use:
+ *
+ * Just include this file after including mujs.h. See also: Bugs, Notes.
+ *
+ *
+ * How it works:
+ *
+ * For mujs APIs which take/return strings, e.g. js_torepr, this file defines
+ * the variants c_js_torepr and u_js_torepr. The c_ variant is a direct wrapper
+ * of js_torepr, and the u_ variant has the same prototype but exposes a UTF-8
+ * API which converts inputs from UTF-8 to CESU-8 (if required), and converts
+ * return values from CESU-8 to UTF-8 (if required).
+ *
+ * It then defines js_torepr as u_js_torepr such that the normal names become
+ * UTF-8 APIs, while the CESU-8 APIs are still accessible via the c_ variants.
  *
  *
  * Bugs:
  *
  * - js_loadfile and js_ploadfile currently (mujs 1.0.6) assume the source file
  *   on disk is CESU-8. This is a mujs bug and U8J does not try to fix it.
- *   It's recommended to read the file into memory and use u_js_[p]loadstring
- *   which do convert the source string to CESU-8 like mujs expects it to be.
+ *   It's recommended to read the file into memory and use u_js_[p]loadstring.
  *
  *
  * Notes:
  *
- * U8J is stateless and does not store values such as callbacks for later use.
- * The best it could have done is use the rgistry, but that's not good enough
- * as U8J could need the value during js_freestate after it's been finalized.
- * Additionally, accessing the registry has a non-trivial performance cost.
+ * - U8J is stateless and does not store values for later use. Specifically:
  *
- * Specifically, the custom allocator at js_newstate, if one is provided, is
- * not used by U8J, and callbacks like js_HasProperty and js_Report are not
- * wrapped automaticallty to have their inputs as UTF-8.
+ *   - realloc is used by default - ignoring alloc/actx which were provided at
+ *     js_newstate (if provided). To use a custom allocator you should implement
+ *     u8j_alloc(J, ptr, size). See details at the comment of U8J_ALLOC_USER.
  *
- * - To use a custom allocator the user should define an implementation for the
- *   function u8j_alloc. See more details at the comment for U8J_ALLOC_USER.
+ *   - Callbacks are not wrapped automatically. If you need UTF-8 inputs at
+ *     callbacks like js_HasProperty or js_Report you should wrap your callback
+ *     with one provided by U8J, e.g.:
  *
- * - To get UTF-8 inputs in a callback the user should wrap the callback with
- *   one provided by U8J. See more details below.
+ *          void my_utf8_report_fn(js_State *J, const char *utf8_message) {
+ *              fprintf(stderr, "%s\n", utf8_message);
+ *          }
+ *          void my_report_wrapper(js_State *J, const char *cesu8_message) {
+ *              u8j_wrap_report(my_utf8_report_fn, J, cesu8_message);
+ *          }
+ *          // ...
+ *          js_setreport(J, my_report_wrapper);
+ *
+ *     The prototypes and return values of u8j_wrap_* is identical to the
+ *     wrapped function with an additional function pointer as first argument.
+ *
+ *     callback: js_Report        js_Put        js_Delete        js_HasProperty
+ *     Wrapper:  u8j_wrap_report  u8j_wrap_put  u8j_wrap_delete  u8j_wrap_has
+ *
+ * - Unless noted otherwise, U8J reserves the prefixes c_ and u_ with mujs API
+ *   names, the prefix `U8J_' with C preprocessor definitions, as well as the
+ *   prefix `u8j_' with C identifiers, JS userdata tags, and property names of
+ *   a JS iterator object (not the iterated names, for instance, do NOT do:
+ *   js_pushiterator(J,..); js_push*(J,..); js_setproperty(J, -2, "u8j_x"); ).
  *
  *
  * Strings which are not converted:
@@ -54,15 +93,81 @@
  *   tags which don't need conversion, or manage the conversion yourself.
  */
 
-#ifndef U8J_NO_INCLUDE
+#define U8J_VERSION_MAJOR 1
+#define U8J_VERSION_MINOR 0
+
+
+/*
+ * Configuration: The following may be defined before including this file:
+ *
+ * - U8J_DO_INCLUDES as 0 to skip the builtin includes (default 1).
+ * - U8J_IMPL_ALLOC as U8J_ALLOC_USER - see below (default U8J_ALLOC_AUTO).
+ * - U8J_IMPL_STACK_BUF_SIZ as as a size in bytes (default 256).
+ * - U8J_AUTO_MAP as 0 to skip the automatic mapping of mujs APIs to the u_
+ *                names (i.e. the normal and c_ names are direct mujs calls,
+ *                and the u_ (and u8j_) names provide UTF-8 functionality).
+ */
+
+#ifndef U8J_DO_INCLUDES
+    #define U8J_DO_INCLUDES 1
+#endif
+#if U8J_DO_INCLUDES
     #include <stdlib.h>  /* size_t, realloc */
     #include <stdio.h>   /* vsnprintf at js_[name]error(J, fmt, ...) */
     #include <stdarg.h>  /* js_[name]error(J, fmt, ...) */
 #endif
 
+#ifndef U8J_AUTO_MAP
+    #define U8J_AUTO_MAP 1
+#endif
 
-#define U8J_VERSION_MAJOR 1
-#define U8J_VERSION_MINOR 0
+/* (stack) buffer size - avoid some memory allocation if the string fits this */
+#ifndef U8J_IMPL_STACK_BUF_SIZ
+    #define U8J_IMPL_STACK_BUF_SIZ 256
+#endif
+
+
+/* currently uses realloc, ignoring alloc/actx at js_newstate */
+#define U8J_ALLOC_AUTO 0
+
+/*
+ * The user should implement `u8j_alloc' for this declaration:
+ *     U8J_API void * u8j_alloc(js_State *J, void *ptr, U8J_SIZ size);
+ *
+ * This function should use ptr/size exactly like the alloc function at
+ * js_newstate does.
+ *
+ * You'd probably want to store The actual alloc/actx values at the context,
+ * set it with js_setcontext right after js_newstate, make sure it stays until
+ * js_freestate returns, while u8j_alloc grabs and uses them via js_getcontext.
+ */
+#define U8J_ALLOC_USER 1
+
+#ifndef U8J_IMPL_ALLOC
+    #define U8J_IMPL_ALLOC U8J_ALLOC_AUTO
+#endif
+
+
+#ifdef __GNUC__
+    #define U8J__UNUSED __attribute__ ((unused))
+#else
+    #define U8J_UNUSED
+#endif
+
+/* mujs (and our) APIs use only int, but as U8J_SIZ where it should be size_t */
+typedef int U8J_SIZ;
+#define U8J_API U8J__UNUSED static
+
+
+/* declare u8j_alloc if the user implements it later */
+U8J_API void *u8j_alloc(js_State *J, void *ptr, U8J_SIZ siz);
+
+#if U8J_IMPL_ALLOC == U8J_ALLOC_AUTO
+    /* we provide the definition if the user doesn't */
+    U8J_API void *u8j_alloc(js_State *J /* ignored */, void *ptr, U8J_SIZ siz) {
+        return realloc(ptr, (size_t)siz);
+    }
+#endif
 
 
 /* define mujs.h macros if needed in case mujs.h changes in the future */
@@ -99,37 +204,9 @@
 #endif
 
 
-#ifdef __GNUC__
-    #define U8J__UNUSED __attribute__ ((unused))
-#else
-    #define U8J_UNUSED
-#endif
-
-#define U8J_API U8J__UNUSED static
-
-
-/*
- * lengths/sizes should be size_t, but mujs APIs use only int, and so do we for
- * compatibility, but make it obvious where size_t should have been used.
- * size_t is still used by U8J if it doesn't necessarily end up at mujs APIs.
- */
-typedef int U8J_SIZ;
-
-/* stack buffer size - avoid allocation if converting and it fits this size */
-#ifndef U8J_IMPL_STACK_BUF_SIZ
-    #define U8J_IMPL_STACK_BUF_SIZ 256
-#endif
-
-
-/*
-#define U8J__DBG(...) \
-    do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while(0)
-*/
-
-
-/**************************************************
- * CESU-8 and UTF-8 test and conversion functions *
- **************************************************/
+/******************************************************
+ * Generic CESU-8 and UTF-8 test/conversion utilities *
+ ******************************************************/
 
 /*
  * Unicode supplementary codepoint is U+10000 or higher. In UTF-8 it's a 4-bytes
@@ -143,7 +220,6 @@ typedef int U8J_SIZ;
  * the CP lower 16 bits are bb...aa, the top 5 are yyyy + 1
  */
 
-
 /* tests up to 6 bytes, aborts crrectly on string termination */
 static inline int u8j__is_cesu8_smp(const unsigned char *s)
 {
@@ -151,14 +227,17 @@ static inline int u8j__is_cesu8_smp(const unsigned char *s)
            s[3] == 0xed && (s[4] & 0xf0) == 0xb0 && (s[5] & 0xc0) == 0x80;
 }
 
-/* conversion can be in-place if src and dst are the same (utf8 is shorter) */
-U8J_API void u8j_write_utf8(const char *cesu8_src, char *utf8_dst)
+/* writes utf8_len+1 bytes to utf8_dst (adds '\0').
+ * utf8_len must come from u8j_[l]utf8_len(..) and must not be 0.
+ * conversion can be in-place if src and dst are the same (utf8 is shorter). */
+U8J_API void u8j_write_utf8(const char *cesu8_src, char *utf8_dst, U8J_SIZ utf8_len)
 {
     const unsigned char *s = (const unsigned char *)cesu8_src;
     unsigned char *dst = (unsigned char *)utf8_dst;
+    unsigned char * const fin = dst + utf8_len;
     unsigned char top5;
 
-    while (*s) {
+    while (dst <= fin - 4) {
         if (u8j__is_cesu8_smp(s)) {
             top5 = (s[1] & 0x0f) + 1;
 
@@ -174,18 +253,34 @@ U8J_API void u8j_write_utf8(const char *cesu8_src, char *utf8_dst)
             *dst++ = *s++;
         }
     }
+    while (dst < fin)
+        *dst++ = *s++;
 
     *dst = 0;
 }
 
 /* 0 if no conversion to UTF-8 is required, else the expected UTF-8 strlen */
-U8J_API size_t u8j_utf8_len(const char *cesu8)
+U8J_API U8J_SIZ u8j_utf8_len(const char *cesu8)
 {
-    size_t i = 0, smp_count = 0;
+    U8J_SIZ i = 0, smp_count = 0;
     if (!cesu8)
         return 0;  /* no conversion required */
 
     for (; cesu8[i]; i++) {
+        if (u8j__is_cesu8_smp((const unsigned char *)cesu8 + i))
+            smp_count++;
+    }
+
+    return smp_count ? i - smp_count * 2 : 0;
+}
+
+U8J_API U8J_SIZ u8j_lutf8_len(const char *cesu8, U8J_SIZ cesu8_len)
+{
+    U8J_SIZ i = 0, smp_count = 0;
+    if (cesu8_len < 6)
+        return 0;  /* no conversion required */
+
+    for (; i <= cesu8_len - 6; i++) {
         if (u8j__is_cesu8_smp((const unsigned char *)cesu8 + i))
             smp_count++;
     }
@@ -202,11 +297,9 @@ static inline int u8j__is_utf8_smp(const unsigned char *s)
            !(s[0] & 0x04) != !((s[0] & 0x03) | (s[1] & 0x30)) /* top5: 0x01..0x10 */;
 }
 
-/*
- * writes cesu8_len+1 bytes to cesu8_dst (adds '\0').
- * cesu8_len must not be 0, and must come from js_[l]cesu8_len(..)
- */
-U8J_API void u8j_write_cesu8(const char *utf8_src, char *cesu8_dst, size_t cesu8_len)
+/* writes cesu8_len+1 bytes to cesu8_dst (adds '\0').
+ * cesu8_len must come from u8j_[l]cesu8_len(..) and must not be 0.  */
+U8J_API void u8j_write_cesu8(const char *utf8_src, char *cesu8_dst, U8J_SIZ cesu8_len)
 {
     const unsigned char *s = (const unsigned char *)utf8_src;
     unsigned char *dst = (unsigned char *)cesu8_dst;
@@ -238,22 +331,10 @@ U8J_API void u8j_write_cesu8(const char *utf8_src, char *cesu8_dst, size_t cesu8
     *dst = 0;
 }
 
-/* 1 if no conversion to CESU-8 is required, else 0 */
-U8J_API int u8j_same_as_cesu8(const char * const utf8)
-{
-    if (utf8) {
-        for (int i = 0; utf8[i]; i++) {
-            if (u8j__is_utf8_smp((const unsigned char *)utf8 + i))
-                return 0;
-        }
-    }
-    return 1;
-}
-
 /* 0 if no conversion to CESU-8 is required, else the expected CESU-8 strlen */
-U8J_API size_t u8j_cesu8_len(const char * const utf8)
+U8J_API U8J_SIZ u8j_cesu8_len(const char * const utf8)
 {
-    size_t i = 0, smp_count = 0;
+    U8J_SIZ i = 0, smp_count = 0;
     if (!utf8)
         return 0;
 
@@ -266,9 +347,9 @@ U8J_API size_t u8j_cesu8_len(const char * const utf8)
     return smp_count ? i + smp_count * 2 : 0;
 }
 
-U8J_API size_t u8j_lcesu8_len(const char *utf8, size_t const utf8_len)
+U8J_API U8J_SIZ u8j_lcesu8_len(const char *utf8, U8J_SIZ utf8_len)
 {
-    size_t i = 0, smp_count = 0;
+    U8J_SIZ i = 0, smp_count = 0;
     /* we allow NULL utf8 if utf8_len implies an actual buffer */
     if (utf8_len < 4)
         return 0;
@@ -282,45 +363,9 @@ U8J_API size_t u8j_lcesu8_len(const char *utf8, size_t const utf8_len)
 }
 
 
-/**********************************************************************
- * u8j__malloc, u8j__free, and their setup possibly via u_js_newstate *
- **********************************************************************/
-
-
-/* always uses plain realloc, ignoring alloc/actx at js_newstate */
-#define U8J_ALLOC_PLAIN 0
-
-/*
- * The user should implement `u8j_alloc' for this declaration:
- *     U8J_API void * u8j_alloc(js_State *J, void *ptr, U8J_SIZ size);
- *
- * This function should use ptr/size exactly like the alloc function at
- * js_newstate does.
- *
- * You'd probably want to store The actual alloc/actx values at the context,
- * set it with js_setcontext before any of the U8J wrappers are used, and then
- * u8j_alloc would grab them using js_getcontext.
- *
- * u8j_alloc is not called called during js_newstate nor js_setcontext, and may
- * be called during js_freestate but only while js_getcontext(J) still returns
- * the set context. In may also be called from U8J wrappers and/or during GC.
- */
-#define U8J_ALLOC_USER 1
-
-
-#ifndef U8J_IMPL_ALLOC
-    #define U8J_IMPL_ALLOC U8J_ALLOC_PLAIN
-#endif
-
-
-U8J_API void *u8j_alloc(js_State *J, void *ptr, U8J_SIZ siz);
-
-#if U8J_IMPL_ALLOC == U8J_ALLOC_PLAIN
-    /* we provide the definition if the user doesn't */
-    U8J_API void *u8j_alloc(js_State *J /* ignored */, void *ptr, U8J_SIZ siz) {
-        return realloc(ptr, (size_t)siz);
-    }
-#endif
+/**************************
+ * u8j__malloc, u8j__free *
+ **************************/
 
 static void *u8j__malloc(js_State *J, U8J_SIZ siz) {
     void *ptr = u8j_alloc(J, NULL, siz);
@@ -338,129 +383,12 @@ static void u8j__free(js_State *J, void *ptr) {
 }
 
 
-/* pushstring variants */
+/****************************************
+ * Wrappers for basict mujs string APIs *
+ ****************************************/
 
-/* util: convert utf8 to cesu8 with known result length and push it */
-static void u8j__pushslcesu8string(js_State *J, const char *utf8, int cesu8_len) {
-    char buf[U8J_IMPL_STACK_BUF_SIZ];
-    if (cesu8_len < sizeof buf) {
-        u8j_write_cesu8(utf8, buf, cesu8_len);
-        js_pushlstring(J, buf, cesu8_len);
-        return;
-    }
-
-    char * volatile mem = u8j__malloc(J, cesu8_len + 1);
-    u8j_write_cesu8(utf8, mem, cesu8_len);
-
-    if (js_try(J)) {
-        u8j__free(J, mem);
-        js_throw(J);
-    }
-    js_pushlstring(J, mem, cesu8_len);
-    js_endtry(J);
-
-    u8j__free(J, mem);
-}
-
-U8J_API void c_js_pushlstring(js_State *J, const char *v, int n) { js_pushlstring(J, v, n); }
-U8J_API void u_js_pushlstring(js_State *J, const char *v, int n) {
-    U8J_SIZ cesu8_len = u8j_lcesu8_len(v, n);
-    if (cesu8_len == 0)
-        js_pushlstring(J, v, n);
-    else
-        u8j__pushslcesu8string(J, v, cesu8_len);
-}
-
-/* U8J__IN_NON could have been used, but here we reuse u8j__pushslcesu8string */
-U8J_API void c_js_pushstring(js_State *J, const char *v) { js_pushstring(J, v); }
-U8J_API void u_js_pushstring(js_State *J, const char *v) {
-    if (u8j_same_as_cesu8(v))
-        js_pushstring(J, v);
-    else
-        u8j__pushslcesu8string(J, v, u8j_cesu8_len(v));
-}
-
-U8J_API void c_js_pushliteral(js_State *J, const char *v) { js_pushliteral(J, v); }
-U8J_API void u_js_pushliteral(js_State *J, const char *v) {
-    /* mujs literals are cesu8. we define that so are ours, else as string */
-    if (u8j_same_as_cesu8(v))
-        js_pushliteral(J, v);
-    else
-        u8j__pushslcesu8string(J, v, u8j_cesu8_len(v));
-}
-
-
-/* UTF-8 return value userdata handling, and u_js_tostring which uses it */
-
-static void u8j__utf8ret_selfValua(js_State *J)
-{
-    /* if we're ever used as JS string (unlikely), push a valid CESU-8 string */
-    u_js_pushstring(J, (const char *)js_touserdata(J, 0, "u8j_ret"));
-}
-
-static int u8j__utf8ret_has(js_State *J, void *p, const char *name)
-{
-    /* this object supports only these two methods with 0 arguments */
-    if (strcmp(name, "toString") && strcmp(name, "valueOf"))
-        return 0;
-
-    /*
-     * maybe could be optimized by storing the instanciated c function at the
-     * registry (once for all future utf8 userdata objects), and fetch it from
-     * there on any subsequent use - inserting a c function could be expensive.
-     * However, we provide these methods for compliance and interoperability
-     * but don't really expect this to get used, ever, so KISS for now.
-     */
-    js_newcfunction(J, u8j__utf8ret_selfValua, "selfValue", 0);
-    return 1;
-}
-
-
-/* push a VM-managed userdata which holds the resulting alloced UTF-8 value */
-static const char *u8j__push_utf8ret(js_State *J, const char *cesu8, U8J_SIZ utf8_len)
-{
-    char * volatile mem = u8j__malloc(J, utf8_len + 1);
-    u8j_write_utf8(cesu8, mem);
-
-    if (js_try(J)) {
-        u8j__free(J, mem);
-        js_throw(J);
-    }
-    js_pushnull(J);  /* prototype of our object */
-    js_newuserdatax(J, "u8j_ret", mem, u8j__utf8ret_has, NULL, NULL, u8j__free);
-    js_endtry(J);
-
-    return mem;  /* the VM will manage it from here using the u8j__free dtor */
-}
-
-U8J_API const char *c_js_tostring(js_State *J, int idx) { return js_tostring(J, idx); } \
-U8J_API const char *u_js_tostring(js_State *J, int idx) {
-    const char *str = js_tostring(J, idx);
-    U8J_SIZ utf8_len = u8j_utf8_len(str);
-    if (utf8_len == 0)
-        return str;
-
-    /* replace idx with a utf8 userdata and return the utf8 pointer */
-    str = u8j__push_utf8ret(J, str, utf8_len);
-    js_replace(J, idx < 0 ? idx - 1 : idx);
-    return str;
-}
-
-
-/***************************************************
- * Wrappers for mujs APIs which take input strings *
- ***************************************************/
-
-/*
- * Direct c_ variant wrapper and plain u_ UTF8 input wrappers:
- *   if no conversion is required - just invoke the cesu8 function,
- *   else if possible convert into a buffer and invoke, else convert into
- *   allocated space, try-invoke the cesu8 func, free the space.
- */
-
-/* base body of a conversion wrapper - always converts */
-#define U8J__IN_BODY_CONVERT(str_var, wrapped_call) \
-    U8J_SIZ cesu8_len = u8j_cesu8_len(str_var); \
+/* base body of input conversion wrapper: assumes cesu8_len, always converts */
+#define U8J__IN_CONVERT_CALL(str_var, wrapped_call) \
     if (cesu8_len < U8J_IMPL_STACK_BUF_SIZ) { \
         char buf[U8J_IMPL_STACK_BUF_SIZ]; \
         u8j_write_cesu8(str_var, buf, cesu8_len); \
@@ -480,32 +408,158 @@ U8J_API const char *u_js_tostring(js_State *J, int idx) {
     }
 
 
+/* pushstring variants */
+
+/* util: convert utf8 `v' to cesu8 with known result length and push it */
+static void u8j__pushslcesu8string(js_State *J, const char *v, U8J_SIZ cesu8_len) {
+    U8J__IN_CONVERT_CALL(v, js_pushlstring(J, v, cesu8_len))
+}
+
+U8J_API void c_js_pushlstring(js_State *J, const char *v, int n) { js_pushlstring(J, v, n); }
+U8J_API void u_js_pushlstring(js_State *J, const char *v, int n) {
+    U8J_SIZ cesu8_len = u8j_lcesu8_len(v, n);
+    if (cesu8_len == 0)
+        js_pushlstring(J, v, n);
+    else
+        u8j__pushslcesu8string(J, v, cesu8_len);
+}
+
+U8J_API void c_js_pushstring(js_State *J, const char *v) { js_pushstring(J, v); }
+U8J_API void u_js_pushstring(js_State *J, const char *v) {
+    U8J_SIZ cesu8_len = u8j_cesu8_len(v);
+    if (cesu8_len == 0)
+        js_pushstring(J, v);
+    else
+        u8j__pushslcesu8string(J, v, cesu8_len);
+}
+
+/* literals cannot remain literals if converting, so use string on such case */
+U8J_API void c_js_pushliteral(js_State *J, const char *v) { js_pushliteral(J, v); }
+U8J_API void u_js_pushliteral(js_State *J, const char *v) {
+    U8J_SIZ cesu8_len = u8j_cesu8_len(v);
+    if (cesu8_len == 0)
+        js_pushliteral(J, v);
+    else
+        u8j__pushslcesu8string(J, v, cesu8_len);
+}
+
+
+/*
+ * UTF-8 return value userdata. This object is not supposed to be used as a JS
+ * value - the same way that idx isn't after js_tostring(J, idx), because the
+ * call can change the value at idx, and likewise we change it to userdata.
+ *
+ * Nevertheless, for completeness, we do provide this object with toString and
+ * valueOf methods which return a valid CESU-8 string - it has no performance
+ * cost. However, accessing these methods is costly-ish (js_newcfunction).
+ */
+
+static void u8j__utf8ret_selfValua(js_State *J)
+{
+    u_js_pushstring(J, (const char *)js_touserdata(J, 0, "u8j_ret"));
+}
+
+static int u8j__utf8ret_has(js_State *J, void *p, const char *name)
+{
+    if (strcmp(name, "toString") && strcmp(name, "valueOf"))
+        return 0;
+    js_newcfunction(J, u8j__utf8ret_selfValua, "selfValue", 0);
+    return 1;
+}
+
+/* push (and return) a VM-managed userdata - UTF-8 string from `cesu8' */
+static const char *u8j__push_utf8ret(js_State *J, const char *cesu8, U8J_SIZ utf8_len)
+{
+    char * volatile mem = u8j__malloc(J, utf8_len + 1);
+    u8j_write_utf8(cesu8, mem, utf8_len);
+
+    if (js_try(J)) {
+        u8j__free(J, mem);
+        js_throw(J);
+    }
+    js_pushnull(J); /* proto. null is good enough, faster than js_getglobal(J, "String") */
+    js_newuserdatax(J, "u8j_ret", mem, u8j__utf8ret_has, NULL, NULL, u8j__free);
+    js_endtry(J);
+
+    return mem;
+}
+
+U8J_API const char *c_js_tostring(js_State *J, int idx) { return js_tostring(J, idx); } \
+U8J_API const char *u_js_tostring(js_State *J, int idx) {
+    const char *str = js_tostring(J, idx);
+    U8J_SIZ utf8_len = u8j_utf8_len(str);
+    if (utf8_len == 0)
+        return str;
+
+    /* [further] replace idx with the utf8 userdata object */
+    str = u8j__push_utf8ret(J, str, utf8_len);
+    js_replace(J, idx < 0 ? idx - 1 : idx);
+    return str;
+}
+
+
+/*********************************************************************
+ * Boilerplate Wrappers for other mujs APIs which take input strings *
+ *********************************************************************/
+
 #define U8J__IN_NON(name, proto_args, str_var, call_args) \
-    static void u8j__cesu8_ ## name proto_args { \
-        U8J__IN_BODY_CONVERT(str_var, js_ ## name call_args) \
-    } \
     U8J_API void c_js_ ## name proto_args { js_ ## name call_args; } \
     U8J_API void u_js_ ## name proto_args { \
-        if (u8j_same_as_cesu8(str_var)) \
+        U8J_SIZ cesu8_len = u8j_cesu8_len(str_var); \
+        if (cesu8_len == 0) { \
             js_ ## name call_args; \
-        else \
-            u8j__cesu8_ ## name call_args; \
+        } else { \
+            U8J__IN_CONVERT_CALL(str_var, js_ ## name call_args) \
+        } \
     }
 
 #define U8J__IN_INT(name, proto_args, str_var, call_args) \
-    static int u8j__cesu8_ ## name proto_args { \
-        int ret_val; \
-        U8J__IN_BODY_CONVERT(str_var, ret_val = js_ ## name call_args) \
-        return ret_val; \
-    } \
     U8J_API int c_js_ ## name proto_args { return js_ ## name call_args; } \
     U8J_API int u_js_ ## name proto_args { \
-        if (u8j_same_as_cesu8(str_var)) \
+        U8J_SIZ cesu8_len = u8j_cesu8_len(str_var); \
+        if (cesu8_len == 0) { \
             return js_ ## name call_args; \
-        else \
-            return u8j__cesu8_ ## name call_args; \
+        } else { \
+            int ret_val; \
+            U8J__IN_CONVERT_CALL(str_var, ret_val = js_ ## name call_args) \
+            return ret_val; \
+        } \
     }
 
+/*
+// Example expanded result of
+//    U8J__IN_NON(getglobal, (js_State *J, const char *name), name, (J, name))
+
+U8J_API void c_js_getglobal(js_State *J, const char *name) {
+    js_getglobal(J, name);
+}
+
+U8J_API void u_js_getglobal(js_State *J, const char *name) {
+    int cesu8_len = u8j_cesu8_len(name);
+    if (cesu8_len == 0) {
+        js_getglobal(J, name);
+    } else {
+        if (cesu8_len < U8J_IMPL_STACK_BUF_SIZ) {
+            char buf[U8J_IMPL_STACK_BUF_SIZ];
+            u8j_write_cesu8(name, buf, cesu8_len);
+            name = buf;
+            js_getglobal(J, name);
+
+        } else {
+            char * volatile mem = u8j__malloc(J, cesu8_len + 1);
+            u8j_write_cesu8(name, mem, cesu8_len);
+            name = mem;
+            if (js_try(J)) {
+                u8j__free(J, mem);
+                js_throw(J);
+            }
+            js_getglobal(J, name);
+            js_endtry(J);
+            u8j__free(J, mem);
+        }
+    }
+}
+*/
 
 /* [p]loadstring: source is converted, filename is not */
 U8J__IN_INT(dostring, (js_State *J, const char *source), source, (J, source))
@@ -581,39 +635,11 @@ U8J__DERROR(urierror)
 #undef U8J__DERROR
 
 
-/***********************************************
- * Wrappers for mujs APIs which return strings *
- ***********************************************/
+/*****************************************************
+ * Wrappers for other mujs APIs which return strings *
+ *****************************************************/
 
-/*
- * The main challenge here is where to store the return value such that it
- * remains available to the caller as long as the original CESU-8 value would
- * (i.e. if a conversion is required to begin with).
- *
- * Our general tool is to keep the UTF-8 string at the VM so that it can be
- * garbage-collected normally.
- *
- * There are only 5 APIs which return a string which may need conversion:
- * - js_tostring, js_torepr, js_trystring, js_tryrepr, js_nextiterator.
- *
- * js_tostring and js_torepr replace a value at the stack with the (CESU-8)
- * string, and we simply replace it again with a userdata object which holds
- * the UTF-8 string and return it. The pointer remains valid as long as the
- * userdata object is at the stack (or referenced in general), and otherwise
- * garbage-collected and finalized (freed).
- *
- * js_trystring and js_tryrepr are similar, except they also take a sentinel
- * error string which, on error, we must return (the pointer) as is and without
- * any conversion, so we can't blindly convert the result. These are therefore
- * simple try/catch wrappers around u_js_try{string,repr}.
- *
- * js_nextierator does not have an associated stack string value which we can
- * replace, so we store the UTF-8 string as a userdata property of the iterator
- * itself, which gets garbage collected after we replace it with the next one
- * or when the iterator is garbage-collected.
- */
-
-
+/* u_js_torepr - like js_torepr but further converts to utf8 if needed */
 U8J_API const char *c_js_torepr(js_State *J, int idx) { return js_torepr(J, idx); } \
 U8J_API const char *u_js_torepr(js_State *J, int idx) {
 	js_repr(J, idx);
@@ -621,6 +647,7 @@ U8J_API const char *u_js_torepr(js_State *J, int idx) {
 	return u_js_tostring(J, idx);
 }
 
+/* u_js_try{string,repr} must return the `error' pointer as-is on throw */
 #define U8J__OUT_TRY(name) \
     U8J_API const char *c_js_try ## name(js_State *J, int idx, const char *error) { return js_try ## name(J, idx, error); } \
     U8J_API const char *u_js_try ## name(js_State *J, int idx, const char *error) { \
@@ -638,11 +665,14 @@ U8J__OUT_TRY(string)
 U8J__OUT_TRY(repr)
 
 
-/* js_nextiterator - store the userdata as "u8j_ret" property of the iterator */
+/* u_js_nextiterator does not have a stack string value which we can replace,
+ * so we keep the userdata object as a property "u8j_ret" of the iterator. The
+ * pointer remains valid until we set a new one at a later call or until the
+ * iterator is garbage-collected.    */
 U8J_API const char * c_js_nextiterator(js_State *J, int idx) { return js_nextiterator(J, idx); }
 U8J_API const char * u_js_nextiterator(js_State *J, int idx) {
     const char *str = js_nextiterator(J, idx);
-    int utf8_len = u8j_utf8_len(str);
+    U8J_SIZ utf8_len = u8j_utf8_len(str);
     if (utf8_len == 0)
         return str;
 
@@ -652,6 +682,58 @@ U8J_API const char * u_js_nextiterator(js_State *J, int idx) {
 }
 
 
+/*********************
+ * Callback wrappers *
+ *********************/
+
+#define U8J__PROPERTY_CB_WRAPPER(method, cb_type) \
+    U8J_API int u8j_wrap_ ## method(cb_type method, js_State *J, void *p, const char *name) { \
+        U8J_SIZ utf8_len = u8j_utf8_len(name); \
+        if (utf8_len == 0) { \
+            return method(J, p, name); \
+        } else { \
+            if (utf8_len < U8J_IMPL_STACK_BUF_SIZ) { \
+                char buf[U8J_IMPL_STACK_BUF_SIZ]; \
+                u8j_write_utf8(name, buf, utf8_len); \
+                return method(J, p, buf); \
+            } else { \
+                int ret_val; \
+                char * volatile mem = u8j__malloc(J, utf8_len + 1); \
+                u8j_write_utf8(name, mem, utf8_len); \
+                if (js_try(J)) { \
+                    u8j__free(J, mem); \
+                    js_throw(J); \
+                } \
+                ret_val = method(J, p, mem); \
+                js_endtry(J); \
+                u8j__free(J, mem); \
+                return ret_val; \
+            } \
+        } \
+    }
+
+U8J__PROPERTY_CB_WRAPPER(put, js_Put)
+U8J__PROPERTY_CB_WRAPPER(has, js_HasProperty)
+U8J__PROPERTY_CB_WRAPPER(delete, js_Delete)
+
+
+/* js_Report must not throw and should not even do js_try because the report
+ * could be for try-stack overflow. We use a fixed stack buffer of 1K (by
+ * default), and if a conversion needs more then we report without conversion.
+ * As of 1.0.6 mujs reports have max strlen of 511. */
+U8J_API void u8j_wrap_report(js_Report report, js_State *J, const char *message) {
+    U8J_SIZ utf8_len = u8j_utf8_len(message);
+    if (utf8_len == 0 || utf8_len >= U8J_IMPL_STACK_BUF_SIZ /* def=256 */ * 4) {
+        report(J, message);
+    } else {
+        char buf[U8J_IMPL_STACK_BUF_SIZ * 4];
+        u8j_write_utf8(message, buf, utf8_len);
+        report(J, buf);
+    }
+}
+
+
+#if U8J_AUTO_MAP
 
 #define js_dostring u_js_dostring
 #define js_loadstring u_js_loadstring
@@ -700,3 +782,5 @@ U8J_API const char * u_js_nextiterator(js_State *J, int idx) {
 #define js_tryrepr u_js_tryrepr
 
 #define js_nextiterator u_js_nextiterator
+
+#endif /* U8J_AUTO_MAP */
