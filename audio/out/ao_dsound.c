@@ -700,8 +700,8 @@ const struct ao_driver audio_out_dsound = {
     .list_devs = list_devs,
     .priv_size = sizeof(struct priv),
     .options = (const struct m_option[]) {
-        OPT_INT("device", cfg_device, 0, OPTDEF_INT(-1)),
-        OPT_INTRANGE("buffersize", cfg_buffersize, 0, 1, 10000, OPTDEF_INT(200)),
+        {"device", OPT_INT(cfg_device), OPTDEF_INT(-1)},
+        {"buffersize", OPT_INT(cfg_buffersize), M_RANGE(1, 10000), OPTDEF_INT(200)},
         {0}
     },
 };
