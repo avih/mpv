@@ -46,6 +46,11 @@
 #define ESC_COLOR_FG "\033[38;2;%d;%d;%dm"
 #define ESC_COLOR256_BG "\033[48;5;%dm"
 #define ESC_COLOR256_FG "\033[38;5;%dm"
+
+// https://gitlab.com/gnachman/iterm2/-/wikis/synchronized-updates-spec
+#define ESC_BSU "\033P=1s\033\\"  // begin synced update
+#define ESC_ESU "\033P=2s\033\\"  // end synced update
+
 #define DEFAULT_WIDTH 80
 #define DEFAULT_HEIGHT 25
 
@@ -54,6 +59,7 @@ struct vo_tct_opts {
     int width;   // 0 -> default
     int height;  // 0 -> default
     int term256;  // 0 -> true color
+    int termsync;  // 1 -> send BSU/ESU
 };
 
 #define OPT_BASE_STRUCT struct vo_tct_opts
@@ -65,6 +71,7 @@ static const struct m_sub_options vo_tct_conf = {
         {"vo-tct-width", OPT_INT(width)},
         {"vo-tct-height", OPT_INT(height)},
         {"vo-tct-256", OPT_FLAG(term256)},
+        {"vo-tct-sync", OPT_FLAG(termsync)},
         {0}
     },
     .defaults = &(const struct vo_tct_opts) {
@@ -236,6 +243,8 @@ static void draw_image(struct vo *vo, mp_image_t *mpi)
 static void flip_page(struct vo *vo)
 {
     struct priv *p = vo->priv;
+    if (p->opts->termsync)
+        printf(ESC_BSU);
     if (p->opts->algo == ALGO_PLAIN) {
         write_plain(
             vo->dwidth, vo->dheight, p->swidth, p->sheight,
@@ -247,6 +256,8 @@ static void flip_page(struct vo *vo)
             p->frame->planes[0], p->frame->stride[0],
             p->opts->term256);
     }
+    if (p->opts->termsync)
+        printf(ESC_ESU);
     fflush(stdout);
 }
 
