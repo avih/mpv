@@ -293,9 +293,14 @@ struct mpv_handle *mp_new_client(struct mp_client_api *clients, const char *name
         .cur_event = talloc_zero(client, struct mpv_event),
         .events = talloc_array(client, mpv_event, num_events),
         .max_events = num_events,
-        .event_mask = (1ULL << INTERNAL_EVENT_BASE) - 1, // exclude internal events
+        .event_mask = 1ULL << MPV_EVENT_SHUTDOWN,  // shutdown is always sent, others should be requested
         .wakeup_pipe = {-1, -1},
     };
+
+    const char *me = getenv("MPV_EVENTS_ALL");  // "1" enables all except tick
+    if (me && !strcmp("1", me))
+        client->event_mask = ((1ULL << INTERNAL_EVENT_BASE) - 1) & ~(1ULL << MPV_EVENT_TICK);
+
     pthread_mutex_init(&client->lock, NULL);
     pthread_mutex_init(&client->wakeup_lock, NULL);
     pthread_cond_init(&client->wakeup, NULL);
@@ -309,8 +314,6 @@ struct mpv_handle *mp_new_client(struct mp_client_api *clients, const char *name
         client->fuzzy_initialized = true;
 
     pthread_mutex_unlock(&clients->lock);
-
-    mpv_request_event(client, MPV_EVENT_TICK, 0);
 
     return client;
 }
